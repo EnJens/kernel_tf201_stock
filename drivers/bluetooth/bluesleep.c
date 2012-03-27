@@ -401,8 +401,9 @@ static void bluesleep_stop(void)
 	}
 	/* assert BT_WAKE */
 	if (bsi->has_ext_wake == 1)
-		gpio_set_value(bsi->ext_wake, 1);
-	set_bit(BT_EXT_WAKE, &flags);
+		gpio_set_value(bsi->ext_wake, 0);
+	clear_bit(BT_EXT_WAKE, &flags);
+	//set_bit(BT_EXT_WAKE, &flags);
 	del_timer(&tx_timer);
 	clear_bit(BT_PROTO, &flags);
 
@@ -734,7 +735,9 @@ static int __init bluesleep_init(void)
 
 	BT_INFO("BlueSleep Mode Driver Ver %s", VERSION);
 
+	printk(KERN_INFO "%s+ #####\n", __func__);
 	retval = platform_driver_register(&bluesleep_driver);
+	printk(KERN_INFO "%s- #####\n", __func__);
 	if (retval)
 		return retval;
 
@@ -806,8 +809,11 @@ static int __init bluesleep_init(void)
 
 	/* assert bt wake */
 	if (bsi->has_ext_wake == 1)
-		gpio_set_value(bsi->ext_wake, 1);
-	set_bit(BT_EXT_WAKE, &flags);
+		gpio_set_value(bsi->ext_wake, 0);
+		//gpio_set_value(bsi->ext_wake, 1);
+	clear_bit(BT_EXT_WAKE, &flags);
+	//set_bit(BT_EXT_WAKE, &flags);
+
 	hci_register_notifier(&hci_event_nblock);
 
 	return 0;
