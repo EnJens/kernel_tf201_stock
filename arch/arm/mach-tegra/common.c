@@ -119,6 +119,7 @@ void tegra_assert_system_reset(char mode, const char *cmd)
 #endif
 }
 static int modem_id;
+static int sku_override;
 static int debug_uart_port_id;
 static enum audio_codec_type audio_codec_name;
 static int max_cpu_current;
@@ -672,6 +673,20 @@ int tegra_get_modem_id(void)
 
 __setup("modem_id=", tegra_modem_id);
 
+static int __init tegra_sku_override(char *id)
+{
+	char *p = id;
+
+	sku_override = memparse(p, &p);
+	return 1;
+}
+
+int tegra_get_sku_override(void)
+{
+	return sku_override;
+}
+
+early_param("sku_override=", tegra_sku_override);
 
 
 /*
