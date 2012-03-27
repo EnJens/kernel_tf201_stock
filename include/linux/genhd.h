@@ -13,6 +13,7 @@
 #include <linux/kdev_t.h>
 #include <linux/rcupdate.h>
 #include <linux/slab.h>
+#include <linux/wakelock.h>
 
 #ifdef CONFIG_BLOCK
 
@@ -190,6 +191,7 @@ struct gendisk {
 	struct blk_integrity *integrity;
 #endif
 	int node_id;
+	struct wake_lock sd_wake_lock;
 };
 
 static inline struct gendisk *part_to_disk(struct hd_struct *part)
