@@ -807,15 +807,21 @@ static void __init tf201_ramconsole_reserve(unsigned long size)
 {
 	struct resource *res;
 	long ret;
+	unsigned long real_start, real_size;
 
 	res = platform_get_resource(&ram_console_device, IORESOURCE_MEM, 0);
 	if (!res) {
 		pr_err("Failed to find memory resource for ram console\n");
 		return;
 	}
+	
 	res->start = memblock_end_of_DRAM() - size;
 	res->end = res->start + size - 1;
-	ret = memblock_remove(res->start, size);
+	// Register an extra 1M before ramconsole to store kexec stuff
+	real_start = res->start - SZ_1M;
+	real_size = size + SZ_1M;
+
+	ret = memblock_remove(real_start, real_size);
 	if (ret) {
 		ram_console_device.resource = NULL;
 		ram_console_device.num_resources = 0;

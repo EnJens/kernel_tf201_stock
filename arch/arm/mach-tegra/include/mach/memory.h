@@ -26,9 +26,15 @@
 #if defined(CONFIG_ARCH_TEGRA_2x_SOC)
 #define PLAT_PHYS_OFFSET		UL(0)
 #define END_MEM				UL(0x40000000)
+#if defined(CONFIG_KEXEC_HARDBOOT)
+#define KEXEC_HB_PAGE_ADDR 		UL(0x3FE00000)
+#endif
 #else
 #define PLAT_PHYS_OFFSET		UL(0x80000000)
 #define END_MEM				UL(0xC0000000)
+#if defined(CONFIG_KEXEC_HARDBOOT)
+#define KEXEC_HB_PAGE_ADDR 		UL(0xBFE00000)
+#endif
 #endif
 
 /*
@@ -40,6 +46,8 @@
 #define NET_SKB_PAD	L1_CACHE_BYTES
 
 #define CONSISTENT_DMA_SIZE	(14 * SZ_1M)
+
+
 
 #endif
 
