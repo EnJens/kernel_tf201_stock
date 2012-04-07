@@ -25,8 +25,10 @@
 /* physical offset of RAM */
 #if defined(CONFIG_ARCH_TEGRA_2x_SOC)
 #define PLAT_PHYS_OFFSET		UL(0)
+#define END_MEM				UL(0x40000000)
 #else
 #define PLAT_PHYS_OFFSET		UL(0x80000000)
+#define END_MEM				UL(0xC0000000)
 #endif
 
 /*
