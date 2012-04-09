@@ -80,6 +80,7 @@ struct nvhost_device {
 	struct list_head client_list;	/* List of clients and rate requests */
 
 	struct nvhost_channel *channel;	/* Channel assigned for the module */
+	struct nvhost_master	*host;
 
 	/* Preparing for power off. Used for context save. */
 	int (*prepare_poweroff)(struct nvhost_device *dev);

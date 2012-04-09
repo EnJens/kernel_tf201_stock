@@ -31,7 +31,7 @@ struct tegra_tsensor_pmu_data {
 };
 
 #ifdef CONFIG_SENSORS_TEGRA_TSENSOR
-void __init tegra3_tsensor_init(struct tegra_tsensor_pmu_data *data);
+void __init tegra3_tsensor_init(struct tegra_tsensor_pmu_data *);
 #else
 static inline void tegra3_tsensor_init(struct tegra_tsensor_pmu_data *data)
 {}

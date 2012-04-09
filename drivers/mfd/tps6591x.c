@@ -283,7 +283,7 @@ out:
 EXPORT_SYMBOL_GPL(tps6591x_update);
 
 static struct i2c_client *tps6591x_i2c_client;
-static void tps6591x_power_off(void)
+void tps6591x_power_off(void)
 {
 	struct device *dev = NULL;
 
@@ -353,7 +353,6 @@ static int tps6591x_gpio_output(struct gpio_chip *gc, unsigned offset,
 	if (ret)
 		return ret;
 
-	reg_val &= ~0x1;
 	val = (value & 0x1) | 0x4;
 	reg_val = reg_val | val;
 	return __tps6591x_write(tps6591x->client, TPS6591X_GPIO_BASE_ADDR +
