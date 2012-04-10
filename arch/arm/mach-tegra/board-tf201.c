@@ -657,8 +657,8 @@ static int __init tf201_touch_init(void)
 #if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT)
 		atmel_mxt_info.config = config_sku2000;
 		atmel_mxt_info.config_crc = MXT_CONFIG_CRC_SKU2000;
-		i2c_register_board_info(TOUCH_BUS_ATMEL_T9, atmel_i2c_info, 1);
 #endif
+		i2c_register_board_info(TOUCH_BUS_ATMEL_T9, atmel_i2c_info, 1);
 	return 0;
 }
 
