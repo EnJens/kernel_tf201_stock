@@ -686,12 +686,16 @@ static int acc_function_set_alt(struct usb_function *f,
 	int ret;
 
 	DBG(cdev, "acc_function_set_alt intf: %d alt: %d\n", intf, alt);
-	config_ep_by_speed(cdev->gadget, f, dev->ep_in);
-	ret = usb_ep_enable(dev->ep_in);
+	ret = usb_ep_enable(dev->ep_in,
+			ep_choose(cdev->gadget,
+				&acc_highspeed_in_desc,
+				&acc_fullspeed_in_desc));
 	if (ret)
 		return ret;
-	config_ep_by_speed(cdev->gadget, f, dev->ep_out);
-	ret = usb_ep_enable(dev->ep_out);
+	ret = usb_ep_enable(dev->ep_out,
+			ep_choose(cdev->gadget,
+				&acc_highspeed_out_desc,
+				&acc_fullspeed_out_desc));
 	if (ret) {
 		usb_ep_disable(dev->ep_in);
 		return ret;
