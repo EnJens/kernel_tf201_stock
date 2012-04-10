@@ -996,28 +996,13 @@ void __init tf201_tsensor_init(void)
 int __init tf201_edp_init(void)
 {
 	/* Temporary initalization, needs to be set to the actual
-	   regulator current */
-	   
-#ifdef CONFIG_ASUS_EDP_POLICY
+	   regulator current 
+
+	   Asus force to 5000mA for there systems */
 
 	pr_info("%s : use asus edp policy\n", __func__);
 
 	tegra_init_cpu_edp_limits(5000);
-#else
-
-	unsigned int regulator_mA;
-
-	pr_info("%s : use default edp policy\n", __func__);
-
-	regulator_mA = get_maximum_cpu_current_supported();
-	
-	if (!regulator_mA) {
-		regulator_mA = 6000; /* regular T30/s */
-	}
-	printk("%s: CPU regulator %d mA\n", __func__, regulator_mA);
-
-	tegra_init_cpu_edp_limits(regulator_mA);
-#endif
 
 	return 0;
 }
