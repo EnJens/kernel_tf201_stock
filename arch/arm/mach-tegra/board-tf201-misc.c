@@ -86,8 +86,7 @@ const char *tegra3_get_project_name(void)
 				__func__);
 	}
 
-	return (project_id < TEGRA3_PROJECT_MAX) ?
-		tegra3_project_name[project_id] : "unknown";
+	return "TF201";
 }
 EXPORT_SYMBOL(tegra3_get_project_name);
 
