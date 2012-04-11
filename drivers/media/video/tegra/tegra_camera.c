@@ -51,6 +51,8 @@ struct tegra_camera_dev {
 	int power_refcnt;
 };
 
+static struct tegra_camera_dev *p_cam_dev;
+
 struct tegra_camera_block {
 	int (*enable) (struct tegra_camera_dev *dev);
 	int (*disable) (struct tegra_camera_dev *dev);
@@ -433,6 +435,25 @@ static int tegra_camera_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+int tegra_camera_mclk_on_off(int on)
+{
+    if (!p_cam_dev) return -1;
+
+    if (on){
+        printk("camera mclock on\n");
+        clk_set_rate(p_cam_dev->csus_clk, 6000000);
+        clk_set_rate(p_cam_dev->vi_sensor_clk, 24000000);
+        clk_enable(p_cam_dev->csus_clk);
+        clk_enable(p_cam_dev->vi_sensor_clk);
+    }
+    else{
+        clk_disable(p_cam_dev->vi_sensor_clk);
+        clk_disable(p_cam_dev->csus_clk);
+    }
+printk("-%s\n",__FUNCTION__);
+    return 0;
+}
+
 static const struct file_operations tegra_camera_fops = {
 	.owner = THIS_MODULE,
 	.open = tegra_camera_open,
@@ -533,6 +554,8 @@ static int tegra_camera_probe(struct platform_device *pdev)
 
 	/* dev is set in order to restore in _remove */
 	platform_set_drvdata(pdev, dev);
+
+	p_cam_dev = dev;
 
 	return 0;
 
