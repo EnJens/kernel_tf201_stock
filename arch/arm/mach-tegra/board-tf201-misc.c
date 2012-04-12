@@ -402,7 +402,7 @@ int __init tf201_misc_init(void)
 	pr_debug("%s: start\n", __func__);
 
 	// create a platform device
-	tf201_misc_device = platform_device_alloc("tf201_misc", -1);
+	tf201_misc_device = platform_device_alloc("cardhu_misc", -1);
 
         if (!tf201_misc_device) {
 		ret = -ENOMEM;
