@@ -23,13 +23,13 @@
 #include "gpio-names.h"
 #include "fuse.h"
 
-#define TF201_MISC_ATTR(module) \
-static struct kobj_attribute module##_attr = { \
+#define TF201_MISC_ATTR(module, funcname) \
+static struct kobj_attribute funcname##_attr = { \
 	.attr = { \
 		.name = __stringify(module), \
 		.mode = 0444, \
 	}, \
-	.show = module##_show, \
+	.show = funcname##_show, \
 }
 
 //Chip unique ID is a maximum of 17 characters including NULL termination.
@@ -239,15 +239,15 @@ static ssize_t tf201_vibctl_store(struct kobject *kobj,
 	return ret;
 }
 
-TF201_MISC_ATTR(tf201_chipid);
-TF201_MISC_ATTR(tf201_backup_chipid);
-TF201_MISC_ATTR(tf201_pcbid);
-TF201_MISC_ATTR(tf201_projectid);
-TF201_MISC_ATTR(tf201_projectname);
+TF201_MISC_ATTR(cardhu_chipid, tf201_chipid);
+TF201_MISC_ATTR(cardhu_backup_chipid, tf201_backup_chipid);
+TF201_MISC_ATTR(cardhu_pcbid, tf201_pcbid);
+TF201_MISC_ATTR(cardhu_projectid, tf201_projectid);
+TF201_MISC_ATTR(cardhu_projectname, tf201_projectname);
 
 static struct kobj_attribute tf201_vibctl_attr = {
         .attr = {
-                .name = __stringify(tf201_vibctl),
+                .name = __stringify(cardhu_vibctl),
                 .mode = 0220,
         },
         .store = tf201_vibctl_store,
