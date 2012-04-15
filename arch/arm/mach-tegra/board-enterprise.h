@@ -34,6 +34,8 @@
 #define BOARD_FAB_A00		0x0
 #define BOARD_FAB_A01		0x1
 #define BOARD_FAB_A02		0x2
+#define BOARD_FAB_A03		0x3
+#define BOARD_FAB_A04		0x4
 
 /* vdd_cpu voltage follower */
 #define BOARD_SKU_VF_BIT	0x0400
@@ -50,7 +52,6 @@ int enterprise_regulator_init(void);
 int enterprise_modem_init(void);
 int enterprise_suspend_init(void);
 int enterprise_edp_init(void);
-void __init enterprise_tsensor_init(void);
 void enterprise_bpc_mgmt_init(void);
 
 /* Invensense MPU Definitions */

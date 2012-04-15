@@ -1,7 +1,7 @@
 /*
  * drivers/video/tegra/dc/dev.c
  *
- * Copyright (C) 2011, NVIDIA Corporation
+ * Copyright (C) 2011-2012, NVIDIA Corporation
  *
  * Author: Robert Morell <rmorell@nvidia.com>
  * Some code based on fbdev extensions written by:
@@ -243,7 +243,9 @@ static void tegra_dc_ext_flip_worker(struct work_struct *work)
 	struct tegra_dc_win *wins[DC_N_WINDOWS];
 	struct nvmap_handle_ref *unpin_handles[DC_N_WINDOWS *
 					       TEGRA_DC_NUM_PLANES];
+	struct nvmap_handle_ref *old_handle;
 	int i, nr_unpin = 0, nr_win = 0;
+	bool skip_flip = false;
 
 	for (i = 0; i < DC_N_WINDOWS; i++) {
 		struct tegra_dc_ext_flip_win *flip_win = &data->win[i];
@@ -257,25 +259,36 @@ static void tegra_dc_ext_flip_worker(struct work_struct *work)
 		win = tegra_dc_get_window(ext->dc, index);
 		ext_win = &ext->win[index];
 
+		if (!(atomic_dec_and_test(&ext_win->nr_pending_flips)) &&
+			(flip_win->attr.flags & TEGRA_DC_EXT_FLIP_FLAG_CURSOR))
+			skip_flip = true;
+
 		if (win->flags & TEGRA_WIN_FLAG_ENABLED) {
 			int j;
 			for (j = 0; j < TEGRA_DC_NUM_PLANES; j++) {
-				if (!ext_win->cur_handle[j])
+				if (skip_flip)
+					old_handle = flip_win->handle[j];
+				else
+					old_handle = ext_win->cur_handle[j];
+
+				if (!old_handle)
 					continue;
 
-				unpin_handles[nr_unpin++] =
-					ext_win->cur_handle[j];
+				unpin_handles[nr_unpin++] = old_handle;
 			}
 		}
 
-		tegra_dc_ext_set_windowattr(ext, win, &data->win[i]);
+		if (!skip_flip)
+			tegra_dc_ext_set_windowattr(ext, win, &data->win[i]);
 
 		wins[nr_win++] = win;
 	}
 
-	tegra_dc_update_windows(wins, nr_win);
-	/* TODO: implement swapinterval here */
-	tegra_dc_sync_windows(wins, nr_win);
+	if (!skip_flip) {
+		tegra_dc_update_windows(wins, nr_win);
+		/* TODO: implement swapinterval here */
+		tegra_dc_sync_windows(wins, nr_win);
+	}
 
 	for (i = 0; i < DC_N_WINDOWS; i++) {
 		struct tegra_dc_ext_flip_win *flip_win = &data->win[i];
@@ -398,6 +411,11 @@ static int tegra_dc_ext_flip(struct tegra_dc_ext_user *user,
 	int work_index;
 	int i, ret = 0;
 
+#ifdef CONFIG_ANDROID
+	int index_check[DC_N_WINDOWS] = {0, };
+	int zero_index_id = 0;
+#endif
+
 	if (!user->nvmap)
 		return -EFAULT;
 
@@ -411,6 +429,21 @@ static int tegra_dc_ext_flip(struct tegra_dc_ext_user *user,
 
 	INIT_WORK(&data->work, tegra_dc_ext_flip_worker);
 	data->ext = ext;
+
+#ifdef CONFIG_ANDROID
+	for (i = 0; i < DC_N_WINDOWS; i++) {
+		index_check[i] = args->win[i].index;
+		if (index_check[i] == 0)
+			zero_index_id = i;
+	}
+
+	if (index_check[DC_N_WINDOWS - 1] != 0) {
+		struct tegra_dc_ext_flip_windowattr win_temp;
+		win_temp = args->win[DC_N_WINDOWS - 1];
+		args->win[DC_N_WINDOWS - 1] = args->win[zero_index_id];
+		args->win[zero_index_id] = win_temp;
+	}
+#endif
 
 	for (i = 0; i < DC_N_WINDOWS; i++) {
 		struct tegra_dc_ext_flip_win *flip_win = &data->win[i];
@@ -464,9 +497,14 @@ static int tegra_dc_ext_flip(struct tegra_dc_ext_user *user,
 	for (i = 0; i < DC_N_WINDOWS; i++) {
 		u32 syncpt_max;
 		int index = args->win[i].index;
+		struct tegra_dc_win *win;
+		struct tegra_dc_ext_win *ext_win;
 
 		if (index < 0)
 			continue;
+
+		win = tegra_dc_get_window(ext->dc, index);
+		ext_win = &ext->win[index];
 
 		syncpt_max = tegra_dc_incr_syncpt_max(ext->dc, index);
 
@@ -479,6 +517,8 @@ static int tegra_dc_ext_flip(struct tegra_dc_ext_user *user,
 		args->post_syncpt_val = syncpt_max;
 		args->post_syncpt_id = tegra_dc_get_syncpt_id(ext->dc, index);
 		work_index = index;
+
+		atomic_inc(&ext->win[work_index].nr_pending_flips);
 	}
 	queue_work(ext->win[work_index].flip_wq, &data->work);
 

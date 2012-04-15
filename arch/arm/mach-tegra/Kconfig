@@ -9,6 +9,7 @@ config ARCH_TEGRA_2x_SOC
 	select ARCH_TEGRA_HAS_PCIE
 	select CPU_V7
 	select ARM_GIC
+	select ARM_SAVE_DEBUG_CONTEXT if PM_SLEEP
 	select ARCH_REQUIRE_GPIOLIB
 	select USB_ARCH_HAS_EHCI if USB_SUPPORT
 	select USB_ULPI if USB_SUPPORT
@@ -19,6 +20,7 @@ config ARCH_TEGRA_2x_SOC
 	select USB_ULPI_VIEWPORT if USB_SUPPORT
 	select ARCH_SUPPORTS_MSI if TEGRA_PCI
 	select PCI_MSI if TEGRA_PCI
+	select CPA
 	help
 	  Support for NVIDIA Tegra AP20 and T20 processors, based on the
 	  ARM CortexA9MP CPU and the ARM PL310 L2 cache controller
@@ -31,6 +33,7 @@ config ARCH_TEGRA_3x_SOC
 	select ARCH_TEGRA_HAS_DUAL_CPU_CLUSTERS
 	select CPU_V7
 	select ARM_GIC
+	select ARM_SAVE_DEBUG_CONTEXT if PM_SLEEP
 	select GIC_SET_MULTIPLE_CPUS if SMP
 	select ARCH_REQUIRE_GPIOLIB
 	select USB_ARCH_HAS_EHCI if USB_SUPPORT
@@ -41,6 +44,8 @@ config ARCH_TEGRA_3x_SOC
 	select ARCH_SUPPORTS_MSI if TEGRA_PCI
 	select PCI_MSI if TEGRA_PCI
 	select ARM_ERRATA_754322
+	select TEGRA_LP2_ARM_TWD if HAVE_ARM_TWD && !TEGRA_RAIL_OFF_MULTIPLE_CPUS
+	select CPA
 	help
 	  Support for NVIDIA Tegra 3 family of SoCs, based upon the
 	  ARM CortexA9MP CPU and the ARM PL310 L2 cache controller
@@ -142,6 +147,8 @@ config MACH_CARDHU
        bool "Cardhu board"
        depends on ARCH_TEGRA_3x_SOC
        select MACH_HAS_SND_SOC_TEGRA_WM8903 if SND_SOC
+       select MACH_HAS_SND_SOC_TEGRA_TLV320AIC326X if SND_SOC
+       select MACH_HAS_SND_SOC_TEGRA_MAX98095 if SND_SOC
        help
          Support for NVIDIA Cardhu development platform
 
@@ -162,6 +169,7 @@ config MACH_TEGRA_ENTERPRISE
        bool "Enterprise board"
        depends on ARCH_TEGRA_3x_SOC
        select MACH_HAS_SND_SOC_TEGRA_MAX98088 if SND_SOC
+       select MACH_HAS_SND_SOC_TEGRA_TLV320AIC326X if SND_SOC
        select TEGRA_SLOW_CSITE
        help
          Support for NVIDIA Enterprise development platform
@@ -379,13 +387,6 @@ config TEGRA_EDP_LIMITS
 	  of on-line CPUs to keep CPU rail current within power supply
 	  capabilities.
 
-config TEGRA_INTERNAL_TSENSOR_EDP_SUPPORT
-	bool "Enable EDP and thermal throttling using internal TSensor"
-	depends on TEGRA_EDP_LIMITS && ARCH_TEGRA_3x_SOC
-	help
-	  When enabled, uses internal tsensor to support EDP and
-	  thermal throttling on tegra platform
-
 config TEGRA_EMC_TO_DDR_CLOCK
 	int "EMC to DDR clocks ratio"
 	default "2" if ARCH_TEGRA_2x_SOC
@@ -397,13 +398,6 @@ config TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
 	default n
 	help
 	 Also will restore to original cpu frequency governor when device is resumed
-
-config TEGRA_LEGACY_AUDIO
-	bool "Enable Tegra Legacy Audio APIs"
-	default n
-	help
-	  Say Y if you want to add support legacy (non-ALSA) audio APIs on
-	  Tegra. This will disable ALSA (ASoC) support.
 
 config TEGRA_STAT_MON
         bool "Enable H/W statistics monitor"
@@ -478,7 +472,12 @@ config TEGRA_WDT_RECOVERY
 	help
 	  Enables watchdog recovery mechanism to protect against
 	  suspend/resume hangs.
-endif
+
+config TEGRA_LP2_ARM_TWD
+	bool
+
+config TEGRA_RAIL_OFF_MULTIPLE_CPUS
+	bool
 
 config TEGRA_SLOW_CSITE
 	bool "lower csite clock to 1 Mhz to reduce its power consumption"
@@ -486,3 +485,11 @@ config TEGRA_SLOW_CSITE
 	help
 	  When enabled, csite will be running at 1 Mhz and the performance of
 	  jtag, lauterbach and other debugger will be extremely slow.
+
+config TEGRA_PREINIT_CLOCKS
+	bool "Preinitialize Tegra clocks to known states"
+	default n
+	help
+	  Preinitialize Tegra clocks to known states before actual full-
+	  scale clock initialization starts.
+endif

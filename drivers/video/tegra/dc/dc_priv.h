@@ -101,11 +101,10 @@ struct tegra_dc {
 	wait_queue_head_t		wq;
 
 	struct mutex			lock;
+	struct mutex			one_shot_lock;
 
 	struct resource			*fb_mem;
 	struct tegra_fb_info		*fb;
-
-	struct tegra_overlay_info	*overlay;
 
 	struct {
 		u32			id;
@@ -208,10 +207,6 @@ void tegra_dc_create_sysfs(struct device *dev);
 /* defined in dc.c, used by dc_sysfs.c */
 void tegra_dc_stats_enable(struct tegra_dc *dc, bool enable);
 bool tegra_dc_stats_get(struct tegra_dc *dc);
-
-/* defined in dc.c, used by overlay.c */
-unsigned int tegra_dc_has_multiple_dc(void);
-unsigned long tegra_dc_get_bandwidth(struct tegra_dc_win *wins[], int n);
 
 /* defined in dc.c, used by dc_sysfs.c */
 u32 tegra_dc_read_checksum_latched(struct tegra_dc *dc);

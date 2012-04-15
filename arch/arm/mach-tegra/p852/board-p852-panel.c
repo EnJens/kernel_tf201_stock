@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-tegra/board-p852-panel.c
  *
- * Copyright (c) 2010-2011, NVIDIA Corporation.
+ * Copyright (c) 2010-2012, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -157,7 +157,6 @@ static struct platform_device p852_nvmap_device = {
 };
 
 static struct platform_device *p852_gfx_devices[] __initdata = {
-	&tegra_grhost_device,
 	&tegra_pwfm2_device,
 };
 
@@ -174,6 +173,12 @@ int __init p852_panel_init(void)
 	err = platform_device_register(&p852_nvmap_device);
 	if (err)
 		return err;
+
+#ifdef CONFIG_TEGRA_GRHOST
+	err = nvhost_device_register(&tegra_grhost_device);
+	if (err)
+		return err;
+#endif
 
 	err = platform_add_devices(p852_gfx_devices,
 				   ARRAY_SIZE(p852_gfx_devices));

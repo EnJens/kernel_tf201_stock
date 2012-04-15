@@ -47,11 +47,14 @@
 
 #define STS_SRI	(1<<7)	/*	SOF Recieved	*/
 
-#define TEGRA_HSIC_CONNECTION_MAX_RETRIES 5
 #define HOSTPC_REG_OFFSET		0x1b4
 
 #define HOSTPC1_DEVLC_STS 		(1 << 28)
 #define HOSTPC1_DEVLC_PTS(x)		(((x) & 0x7) << 29)
+
+#define USB1_PREFETCH_ID               6
+#define USB2_PREFETCH_ID               18
+#define USB3_PREFETCH_ID               17
 
 struct tegra_ehci_hcd {
 	struct ehci_hcd *ehci;
@@ -65,15 +68,14 @@ struct tegra_ehci_hcd {
 	int port_resuming;
 	int power_down_on_bus_suspend;
 	int default_enable;
-	struct delayed_work work;
 	enum tegra_usb_phy_port_speed port_speed;
 	struct work_struct clk_timer_work;
 	struct timer_list clk_timer;
 	bool clock_enabled;
 	bool timer_event;
-	int hsic_connect_retries;
 	struct mutex tegra_ehci_hcd_mutex;
 	unsigned int irq;
+	bool bus_suspended_fail;
 };
 
 static void tegra_ehci_power_up(struct usb_hcd *hcd, bool is_dpd)
@@ -169,6 +171,14 @@ static irqreturn_t tegra_ehci_irq (struct usb_hcd *hcd)
 	u32 val;
 	irqreturn_t irq_status;
 	bool pmc_remote_wakeup = false;
+
+	/* Fence read for coherency of AHB master intiated writes */
+	if (tegra->phy->instance == 0)
+		readb(IO_ADDRESS(IO_PPCS_PHYS + USB1_PREFETCH_ID));
+	else if (tegra->phy->instance == 1)
+		readb(IO_ADDRESS(IO_PPCS_PHYS + USB2_PREFETCH_ID));
+	else if (tegra->phy->instance == 2)
+		readb(IO_ADDRESS(IO_PPCS_PHYS + USB3_PREFETCH_ID));
 
 	if ((tegra->phy->usb_phy_type == TEGRA_USB_PHY_TYPE_UTMIP) &&
 		(tegra->ehci->has_hostpc)) {
@@ -329,6 +339,7 @@ static int tegra_ehci_hub_control(
 	if (tegra->phy->instance == 0 &&
 	   (typeReq == SetPortFeature && wValue == USB_PORT_FEAT_RESET)) {
 		spin_unlock_irqrestore(&ehci->lock, flags);
+		mutex_unlock(&tegra->tegra_ehci_hcd_mutex);
 		return tegra_ehci_internal_port_reset(ehci, status_reg);
 	}
 
@@ -698,9 +709,8 @@ restart:
 			tegra_ehci_restart(hcd, false);
 
 		tegra_usb_phy_bus_idle(tegra->phy);
-		tegra->hsic_connect_retries = 0;
 		if (!tegra_usb_phy_is_device_connected(tegra->phy))
-			schedule_delayed_work(&tegra->work, 50);
+			pr_err("%s: no hsic device conenction\n", __func__);
 	} else {
 		tegra_ehci_restart(hcd, false);
 	}
@@ -813,17 +823,19 @@ static int tegra_ehci_bus_suspend(struct usb_hcd *hcd)
 	int error_status = 0;
 
 	mutex_lock(&tegra->tegra_ehci_hcd_mutex);
+	tegra->bus_suspended_fail = false;
 	tegra_ehci_disable_phy_interrupt(hcd);
 	/* ehci_shutdown touches the USB controller registers, make sure
 	 * controller has clocks to it */
 	if (!tegra->host_resumed)
 		tegra_ehci_power_up(hcd, false);
 	error_status = ehci_bus_suspend(hcd);
+	if (error_status)
+		tegra->bus_suspended_fail = true;
 	if (!error_status && tegra->power_down_on_bus_suspend) {
 		tegra_usb_suspend(hcd, false);
 		tegra->bus_suspended = 1;
 	}
-	tegra_usb_phy_postsuspend(tegra->phy, false);
 	mutex_unlock(&tegra->tegra_ehci_hcd_mutex);
 
 	return error_status;
@@ -846,38 +858,31 @@ static int tegra_ehci_bus_resume(struct usb_hcd *hcd)
 }
 #endif
 
-struct temp_buffer {
+struct dma_aligned_buffer {
 	void *kmalloc_ptr;
 	void *old_xfer_buffer;
 	u8 data[0];
 };
 
-static void free_temp_buffer(struct urb *urb)
+static void free_dma_aligned_buffer(struct urb *urb)
 {
-	enum dma_data_direction dir;
-	struct temp_buffer *temp;
+	struct dma_aligned_buffer *temp = container_of(urb->transfer_buffer,
+		struct dma_aligned_buffer, data);
 
 	if (!(urb->transfer_flags & URB_ALIGNED_TEMP_BUFFER))
 		return;
 
-	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
-
-	temp = container_of(urb->transfer_buffer, struct temp_buffer,
-			    data);
-
-	if (dir == DMA_FROM_DEVICE)
+	if(usb_urb_dir_in(urb))
 		memcpy(temp->old_xfer_buffer, temp->data,
 		       urb->transfer_buffer_length);
 	urb->transfer_buffer = temp->old_xfer_buffer;
 	kfree(temp->kmalloc_ptr);
-
 	urb->transfer_flags &= ~URB_ALIGNED_TEMP_BUFFER;
 }
 
-static int alloc_temp_buffer(struct urb *urb, gfp_t mem_flags)
+static int alloc_dma_aligned_buffer(struct urb *urb, gfp_t mem_flags)
 {
-	enum dma_data_direction dir;
-	struct temp_buffer *temp, *kmalloc_ptr;
+	struct dma_aligned_buffer *temp, *kmalloc_ptr;
 	size_t kmalloc_size;
 
 	if (urb->num_sgs || urb->sg ||
@@ -885,26 +890,22 @@ static int alloc_temp_buffer(struct urb *urb, gfp_t mem_flags)
 	    !((uintptr_t)urb->transfer_buffer & (TEGRA_USB_DMA_ALIGN - 1)))
 		return 0;
 
-	dir = usb_urb_dir_in(urb) ? DMA_FROM_DEVICE : DMA_TO_DEVICE;
-
 	/* Allocate a buffer with enough padding for alignment */
 	kmalloc_size = urb->transfer_buffer_length +
-		sizeof(struct temp_buffer) + TEGRA_USB_DMA_ALIGN - 1;
+		sizeof(struct dma_aligned_buffer) + TEGRA_USB_DMA_ALIGN - 1;
 
 	kmalloc_ptr = kmalloc(kmalloc_size, mem_flags);
 	if (!kmalloc_ptr)
 		return -ENOMEM;
 
-	/* Position our struct temp_buffer such that data is aligned */
+	/* Position our struct dma_aligned_buffer such that data is aligned */
 	temp = PTR_ALIGN(kmalloc_ptr + 1, TEGRA_USB_DMA_ALIGN) - 1;
-
 	temp->kmalloc_ptr = kmalloc_ptr;
 	temp->old_xfer_buffer = urb->transfer_buffer;
-	if (dir == DMA_TO_DEVICE)
+	if (!usb_urb_dir_in(urb))
 		memcpy(temp->data, urb->transfer_buffer,
 		       urb->transfer_buffer_length);
 	urb->transfer_buffer = temp->data;
-
 	urb->transfer_flags |= URB_ALIGNED_TEMP_BUFFER;
 
 	return 0;
@@ -915,13 +916,13 @@ static int tegra_ehci_map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 {
 	int ret;
 
-	ret = alloc_temp_buffer(urb, mem_flags);
+	ret = alloc_dma_aligned_buffer(urb, mem_flags);
 	if (ret)
 		return ret;
 
 	ret = usb_hcd_map_urb_for_dma(hcd, urb, mem_flags);
 	if (ret)
-		free_temp_buffer(urb);
+		free_dma_aligned_buffer(urb);
 
 	return ret;
 }
@@ -929,24 +930,7 @@ static int tegra_ehci_map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 static void tegra_ehci_unmap_urb_for_dma(struct usb_hcd *hcd, struct urb *urb)
 {
 	usb_hcd_unmap_urb_for_dma(hcd, urb);
-	free_temp_buffer(urb);
-}
-
-static void tegra_hsic_connection_work(struct work_struct *work)
-{
-	struct tegra_ehci_hcd *tegra =
-		container_of(work, struct tegra_ehci_hcd, work.work);
-	if (tegra_usb_phy_is_device_connected(tegra->phy)) {
-		cancel_delayed_work(&tegra->work);
-		return;
-	}
-	/* Few cases HSIC device may not be connected, so   *
-	** skip this check after configured max re-tries.   */
-	if (tegra->hsic_connect_retries++ > TEGRA_HSIC_CONNECTION_MAX_RETRIES)
-		return;
-
-	schedule_delayed_work(&tegra->work, jiffies + msecs_to_jiffies(50));
-	return;
+	free_dma_aligned_buffer(urb);
 }
 
 void clk_timer_callback(unsigned long data)
@@ -1158,8 +1142,6 @@ static int tegra_ehci_probe(struct platform_device *pdev)
 		goto fail_io;
 	}
 
-	INIT_DELAYED_WORK(&tegra->work, tegra_hsic_connection_work);
-
 	INIT_WORK(&tegra->clk_timer_work, clk_timer_work_handler);
 
 	tegra->phy = tegra_usb_phy_open(instance, hcd->regs, pdata->phy_config,
@@ -1247,16 +1229,22 @@ static int tegra_ehci_resume(struct platform_device *pdev)
 {
 	struct tegra_ehci_hcd *tegra = platform_get_drvdata(pdev);
 	struct usb_hcd *hcd = ehci_to_hcd(tegra->ehci);
+	int ret;
 
+	mutex_lock(&tegra->tegra_ehci_hcd_mutex);
 	if ((tegra->bus_suspended) && (tegra->power_down_on_bus_suspend)) {
 		if (tegra->default_enable)
 			clk_enable(tegra->clk);
+		mutex_unlock(&tegra->tegra_ehci_hcd_mutex);
 		return 0;
 	}
 
 	if (tegra->default_enable)
 		clk_enable(tegra->clk);
-	return tegra_usb_resume(hcd, true);
+
+	ret = tegra_usb_resume(hcd, true);
+	mutex_unlock(&tegra->tegra_ehci_hcd_mutex);
+	return ret;
 }
 
 static int tegra_ehci_suspend(struct platform_device *pdev, pm_message_t state)
@@ -1266,6 +1254,15 @@ static int tegra_ehci_suspend(struct platform_device *pdev, pm_message_t state)
 	int ret;
 	u32 val;
 
+	mutex_lock(&tegra->tegra_ehci_hcd_mutex);
+	/* if bus suspend is failed means there is remote wakeup resume,
+		then abort the PM suspend */
+	if (tegra->bus_suspended_fail) {
+		tegra->bus_suspended_fail = false;
+		pr_err("%s: bus suspend failed, aborting driver suspend\n", __func__);
+		mutex_unlock(&tegra->tegra_ehci_hcd_mutex);
+		return -EBUSY;
+	}
 	if (tegra->phy->hotplug) {
 		/* Disable PHY clock valid interrupts while going into suspend*/
 		val = readl(hcd->regs + TEGRA_USB_SUSP_CTRL_OFFSET);
@@ -1276,6 +1273,7 @@ static int tegra_ehci_suspend(struct platform_device *pdev, pm_message_t state)
 	if ((tegra->bus_suspended) && (tegra->power_down_on_bus_suspend)) {
 		if (tegra->default_enable)
 			clk_disable(tegra->clk);
+		mutex_unlock(&tegra->tegra_ehci_hcd_mutex);
 		return 0;
 	}
 
@@ -1285,6 +1283,7 @@ static int tegra_ehci_suspend(struct platform_device *pdev, pm_message_t state)
 	ret = tegra_usb_suspend(hcd, true);
 	if (tegra->default_enable)
 		clk_disable(tegra->clk);
+	mutex_unlock(&tegra->tegra_ehci_hcd_mutex);
 	return ret;
 }
 #endif
@@ -1314,7 +1313,6 @@ static int tegra_ehci_remove(struct platform_device *pdev)
 		disable_irq_wake(tegra->irq);
 	usb_remove_hcd(hcd);
 	usb_put_hcd(hcd);
-	cancel_delayed_work(&tegra->work);
 	tegra_usb_phy_power_off(tegra->phy, true);
 	tegra_usb_phy_close(tegra->phy);
 	iounmap(hcd->regs);

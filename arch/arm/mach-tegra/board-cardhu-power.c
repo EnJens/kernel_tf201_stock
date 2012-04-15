@@ -379,6 +379,7 @@ int __init cardhu_regulator_init(void)
 	struct board_info pmu_board_info;
 	void __iomem *pmc = IO_ADDRESS(TEGRA_PMC_BASE);
 	u32 pmc_ctrl;
+	bool ext_core_regulator = false;
 
 	/* configure the power management controller to trigger PMU
 	 * interrupts when low */
@@ -404,9 +405,63 @@ int __init cardhu_regulator_init(void)
 		pdata_ldo2_0.regulator.constraints.max_uV = 1200000;
 	}
 
+	/*
+	 * E1198 will have different core regulator decoding.
+	 * A01/A02: Based on sku bit 0.
+	 * A03: Based on bit 2 and bit 0
+	 *       2,0: 00 no core regulator,
+	 *            01:TPS62365
+	 *            10:TPS62366
+	 *            11:TPS623850
+	 */
+	if (board_info.board_id == BOARD_E1198) {
+		int vsels;
+		switch(board_info.fab) {
+		case BOARD_FAB_A00:
+		case BOARD_FAB_A01:
+		case BOARD_FAB_A02:
+			if (board_info.sku & SKU_DCDC_TPS62361_SUPPORT)
+				ext_core_regulator = true;
+			break;
+
+		case BOARD_FAB_A03:
+			vsels = ((board_info.sku >> 1) & 0x2) | (board_info.sku & 1);
+			switch(vsels) {
+			case 1:
+				ext_core_regulator = true;
+				tps62361_pdata.vsel0_def_state = 1;
+				tps62361_pdata.vsel1_def_state = 1;
+				break;
+			case 2:
+				ext_core_regulator = true;
+				tps62361_pdata.vsel0_def_state = 0;
+				tps62361_pdata.vsel1_def_state = 0;
+				break;
+			case 3:
+				ext_core_regulator = true;
+				tps62361_pdata.vsel0_def_state = 1;
+				tps62361_pdata.vsel1_def_state = 0;
+				break;
+			}
+			break;
+		}
+
+		pr_info("BoardId:SKU:Fab 0x%04x:0x%04x:0x%02x\n",
+			board_info.board_id, board_info.sku , board_info.fab);
+		pr_info("Core regulator %s\n",
+			(ext_core_regulator)? "true": "false");
+		pr_info("VSEL 1:0 %d%d\n",
+			tps62361_pdata.vsel1_def_state,
+			tps62361_pdata.vsel0_def_state);
+	}
+
+	if ((board_info.board_id == BOARD_E1291) &&
+		(board_info.sku & SKU_DCDC_TPS62361_SUPPORT))
+		ext_core_regulator = true;
+
 	if ((board_info.board_id == BOARD_E1198) ||
 		(board_info.board_id == BOARD_E1291)) {
-		if (board_info.sku & SKU_DCDC_TPS62361_SUPPORT) {
+		if (ext_core_regulator) {
 			tps_platform.num_subdevs =
 					ARRAY_SIZE(tps_devs_e1198_skubit0_1);
 			tps_platform.subdevs = tps_devs_e1198_skubit0_1;
@@ -422,6 +477,7 @@ int __init cardhu_regulator_init(void)
 		if (pmu_board_info.sku & SKU_DCDC_TPS62361_SUPPORT) {
 			tps_platform.num_subdevs = ARRAY_SIZE(tps_devs_e118x_skubit0_1);
 			tps_platform.subdevs = tps_devs_e118x_skubit0_1;
+			ext_core_regulator = true;
 		} else {
 			tps_platform.num_subdevs = ARRAY_SIZE(tps_devs_e118x_skubit0_0);
 			tps_platform.subdevs = tps_devs_e118x_skubit0_0;
@@ -440,10 +496,9 @@ int __init cardhu_regulator_init(void)
 
 	i2c_register_board_info(4, cardhu_regulators, 1);
 
-	/* Resgister the TPS6236x for all boards whose sku bit 0 is set. */
-	if ((board_info.sku & SKU_DCDC_TPS62361_SUPPORT) ||
-			(pmu_board_info.sku & SKU_DCDC_TPS62361_SUPPORT)) {
-		pr_info("Registering the device TPS62361\n");
+	/* Register the external core regulator if it is require */
+	if (ext_core_regulator) {
+		pr_info("Registering the core regulator\n");
 		i2c_register_board_info(4, tps62361_boardinfo, 1);
 	}
 	return 0;
@@ -510,7 +565,7 @@ static struct regulator_consumer_supply fixed_reg_en_3v3_sys_supply[] = {
 	REGULATOR_SUPPLY("vdd_3v3_edid", NULL),
 	REGULATOR_SUPPLY("vdd_3v3_hdmi_cec", NULL),
 	REGULATOR_SUPPLY("vdd_3v3_gmi", NULL),
-	REGULATOR_SUPPLY("vdd_spk_amp", "tegra-snd-wm8903"),
+	REGULATOR_SUPPLY("vdd_spk_amp", "tegra-snd-wm8903.0"),
 	REGULATOR_SUPPLY("vdd_3v3_sensor", NULL),
 	REGULATOR_SUPPLY("vdd_3v3_cam", NULL),
 	REGULATOR_SUPPLY("vdd_3v3_als", NULL),
@@ -760,7 +815,9 @@ FIXED_REG(3, en_3v3_sys_a04,	en_3v3_sys,	NULL,				0,      0,      TPS6591X_GPIO_
 
 /* Specific to pm269 */
 FIXED_REG(4, en_vdd_bl_pm269,		en_vdd_bl,		NULL, 				0,      0,      TEGRA_GPIO_PH3,	true,	1, 5000);
+#ifndef CONFIG_TEGRA_CARDHU_DSI
 FIXED_REG(6, en_vdd_pnl1_pm269,		en_vdd_pnl1,		FIXED_SUPPLY(en_3v3_sys),	0,      0,      TEGRA_GPIO_PW1,	true,	1, 3300);
+#endif
 FIXED_REG(9, en_3v3_fuse_pm269,		en_3v3_fuse,		FIXED_SUPPLY(en_3v3_sys), 	0,      0,      TEGRA_GPIO_PC1,	true,	0, 3300);
 FIXED_REG(12, en_3v3_pex_hvdd_pm269,	en_3v3_pex_hvdd,	FIXED_SUPPLY(en_3v3_sys), 	0,      0,      TEGRA_GPIO_PC6,	true,	0, 3300);
 
@@ -888,9 +945,14 @@ GREG_INIT(17, en_vddio_vid_oc,		en_vddio_vid_oc,	"vdd_5v0_sys", 0,      0,      
 	ADD_GPIO_REG(en_vddio_vid_oc_pm269),
 
 
+#ifndef CONFIG_TEGRA_CARDHU_DSI
 #define E1247_DISPLAY_FIXED_REG			\
 	ADD_FIXED_REG(en_vdd_bl_pm269),		\
 	ADD_FIXED_REG(en_vdd_pnl1_pm269),
+#else
+#define E1247_DISPLAY_FIXED_REG			\
+	ADD_FIXED_REG(en_vdd_bl_pm269),
+#endif
 
 #define PM313_DISPLAY_FIXED_REG			\
 	ADD_FIXED_REG(en_vdd_bl_pm313),		\
@@ -1191,11 +1253,6 @@ static struct tegra_tsensor_pmu_data  tpdata = {
 	.pmu_16bit_ops = 0,
 	.pmu_i2c_addr = 0x2D,
 };
-
-void __init cardhu_tsensor_init(void)
-{
-	tegra3_tsensor_init(&tpdata);
-}
 
 #ifdef CONFIG_TEGRA_EDP_LIMITS
 

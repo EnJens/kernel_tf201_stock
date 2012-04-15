@@ -104,7 +104,6 @@ static struct nvmap_platform_data p1852_nvmap_data = {
 
 static struct platform_device *p1852_gfx_devices[] __initdata = {
 	&tegra_nvmap_device,
-	&tegra_grhost_device
 };
 
 int __init p1852_panel_init(void)
@@ -126,10 +125,20 @@ int __init p1852_panel_init(void)
 	res->start = tegra_fb_start;
 	res->end = tegra_fb_start + tegra_fb_size - 1;
 
+#ifdef CONFIG_TEGRA_GRHOST
+	err = nvhost_device_register(&tegra_grhost_device);
+	if (err)
+		return err;
+#endif
+
 	err = platform_add_devices(p1852_gfx_devices,
 				ARRAY_SIZE(p1852_gfx_devices));
 	if (!err)
 		err = nvhost_device_register(&tegra_disp1_device);
 
+#if defined(CONFIG_TEGRA_GRHOST) && defined(CONFIG_TEGRA_NVAVP)
+	if (!err)
+		err = nvhost_device_register(&nvavp_device);
+#endif
 	return err;
 }

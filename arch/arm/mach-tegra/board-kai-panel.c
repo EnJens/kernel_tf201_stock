@@ -572,6 +572,7 @@ static int kai_disp1_check_fb(struct device *dev, struct fb_info *info)
 }
 #endif
 
+#if defined(CONFIG_TEGRA_NVMAP)
 static struct nvmap_platform_carveout kai_carveouts[] = {
 	[0] = NVMAP_HEAP_CARVEOUT_IRAM_INIT,
 	[1] = {
@@ -595,12 +596,11 @@ static struct platform_device kai_nvmap_device = {
 		.platform_data = &kai_nvmap_data,
 	},
 };
-
+#endif
 
 static struct platform_device *kai_gfx_devices[] __initdata = {
+#if defined(CONFIG_TEGRA_NVMAP)
 	&kai_nvmap_device,
-#ifdef CONFIG_TEGRA_GRHOST
-	&tegra_grhost_device,
 #endif
 	&tegra_pwfm0_device,
 	&kai_backlight_device,
@@ -620,11 +620,28 @@ static void kai_panel_early_suspend(struct early_suspend *h)
 		fb_blank(registered_fb[0], FB_BLANK_POWERDOWN);
 	if (num_registered_fb > 1)
 		fb_blank(registered_fb[1], FB_BLANK_NORMAL);
+
+#ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
+	cpufreq_save_default_governor();
+	cpufreq_set_conservative_governor();
+	cpufreq_set_conservative_governor_param("up_threshold",
+			SET_CONSERVATIVE_GOVERNOR_UP_THRESHOLD);
+
+	cpufreq_set_conservative_governor_param("down_threshold",
+			SET_CONSERVATIVE_GOVERNOR_DOWN_THRESHOLD);
+
+	cpufreq_set_conservative_governor_param("freq_step",
+		SET_CONSERVATIVE_GOVERNOR_FREQ_STEP);
+#endif
+
 }
 
 static void kai_panel_late_resume(struct early_suspend *h)
 {
 	unsigned i;
+#ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
+	cpufreq_restore_default_governor();
+#endif
 	for (i = 0; i < num_registered_fb; i++)
 		fb_blank(registered_fb[i], FB_BLANK_UNBLANK);
 }
@@ -638,9 +655,10 @@ int __init kai_panel_init(void)
 
 	tegra_get_board_info(&board_info);
 
+#if defined(CONFIG_TEGRA_NVMAP)
 	kai_carveouts[1].base = tegra_carveout_start;
 	kai_carveouts[1].size = tegra_carveout_size;
-
+#endif
 	gpio_request(kai_lvds_avdd_en, "lvds_avdd_en");
 	gpio_direction_output(kai_lvds_avdd_en, 1);
 	tegra_gpio_enable(kai_lvds_avdd_en);
@@ -653,7 +671,7 @@ int __init kai_panel_init(void)
 	gpio_direction_output(kai_lvds_rst, 1);
 	tegra_gpio_enable(kai_lvds_rst);
 
-	if (board_info.fab & BOARD_FAB_A00) {
+	if (board_info.fab == BOARD_FAB_A00) {
 		gpio_request(kai_lvds_rs_a00, "lvds_rs");
 		gpio_direction_output(kai_lvds_rs_a00, 0);
 		tegra_gpio_enable(kai_lvds_rs_a00);
@@ -680,6 +698,12 @@ int __init kai_panel_init(void)
 	kai_panel_early_suspender.resume = kai_panel_late_resume;
 	kai_panel_early_suspender.level = EARLY_SUSPEND_LEVEL_DISABLE_FB;
 	register_early_suspend(&kai_panel_early_suspender);
+#endif
+
+#ifdef CONFIG_TEGRA_GRHOST
+	err = nvhost_device_register(&tegra_grhost_device);
+	if (err)
+		return err;
 #endif
 
 	err = platform_add_devices(kai_gfx_devices,

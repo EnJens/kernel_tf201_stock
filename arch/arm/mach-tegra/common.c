@@ -45,6 +45,7 @@
 #include "fuse.h"
 #include "pm.h"
 #include "reset.h"
+#include "devices.h"
 
 #define MC_SECURITY_CFG2	0x7c
 
@@ -57,6 +58,10 @@
 #define AHB_GIZMO_AHB_MEM		0xc
 #define   ENB_FAST_REARBITRATE	BIT(2)
 #define   DONT_SPLIT_AHB_WR     BIT(7)
+
+#define   RECOVERY_MODE	BIT(31)
+#define   BOOTLOADER_MODE	BIT(30)
+#define   FORCED_RECOVERY_MODE	BIT(1)
 
 #define AHB_GIZMO_USB		0x1c
 #define AHB_GIZMO_USB2		0x78
@@ -112,6 +117,23 @@ void tegra_assert_system_reset(char mode, const char *cmd)
 	void __iomem *reset = IO_ADDRESS(TEGRA_PMC_BASE + 0x00);
 	u32 reg;
 
+	reg = readl_relaxed(reset + PMC_SCRATCH0);
+	/* Writing recovery kernel or Bootloader mode in SCRATCH0 31:30:1 */
+	if (cmd) {
+		if (!strcmp(cmd, "recovery"))
+			reg |= RECOVERY_MODE;
+		else if (!strcmp(cmd, "bootloader"))
+			reg |= BOOTLOADER_MODE;
+		else if (!strcmp(cmd, "forced-recovery"))
+			reg |= FORCED_RECOVERY_MODE;
+		else
+			reg &= ~(BOOTLOADER_MODE | RECOVERY_MODE | FORCED_RECOVERY_MODE);
+	}
+	else {
+		/* Clearing SCRATCH0 31:30:1 on default reboot */
+		reg &= ~(BOOTLOADER_MODE | RECOVERY_MODE | FORCED_RECOVERY_MODE);
+	}
+	writel_relaxed(reg, reset + PMC_SCRATCH0);
 	/* use *_related to avoid spinlock since caches are off */
 	reg = readl_relaxed(reset);
 	reg |= 0x10;
@@ -119,8 +141,10 @@ void tegra_assert_system_reset(char mode, const char *cmd)
 #endif
 }
 static int modem_id;
+static int sku_override;
 static int debug_uart_port_id;
 static enum audio_codec_type audio_codec_name;
+static enum image_type board_image_type = system_image;
 static int max_cpu_current;
 
 /* WARNING: There is implicit client of pllp_out3 like i2c, uart, dsi
@@ -153,12 +177,17 @@ static __initdata struct tegra_clk_init_table common_clk_init_table[] = {
 	{ "pll_p_out2",	"pll_p",	48000000,	false },
 	{ "pll_p_out3",	"pll_p",	0,		true },
 	{ "pll_m_out1",	"pll_m",	275000000,	false },
-	{ "pll_p_out4",	"pll_p",	102000000,	false },
+	{ "pll_p_out4",	"pll_p",	102000000,	true },
 	{ "sclk",	"pll_p_out4",	102000000,	true },
 	{ "hclk",	"sclk",		102000000,	true },
 	{ "pclk",	"hclk",		51000000,	true },
-	{ "wake.sclk",	NULL,		40000000,	true },
+	{ "sbc5.sclk",	NULL,		40000000,	false},
+	{ "sbc6.sclk",	NULL,		40000000,	false},
 #endif
+	{ "sbc1.sclk",	NULL,		40000000,	false},
+	{ "sbc2.sclk",	NULL,		40000000,	false},
+	{ "sbc3.sclk",	NULL,		40000000,	false},
+	{ "sbc4.sclk",	NULL,		40000000,	false},
 #else
 	{ "pll_p",	NULL,		216000000,	true },
 	{ "pll_p_out1",	"pll_p",	28800000,	false },
@@ -398,39 +427,8 @@ static void __init tegra_init_ahb_gizmo_settings(void)
 	gizmo_writel(val, AHB_MEM_PREFETCH_CFG4);
 }
 
-static bool console_flushed;
-
-static void tegra_pm_flush_console(void)
-{
-	if (console_flushed)
-		return;
-	console_flushed = true;
-
-	pr_emerg("Restarting %s\n", linux_banner);
-	if (console_trylock()) {
-		console_unlock();
-		return;
-	}
-
-	mdelay(50);
-
-	local_irq_disable();
-	if (!console_trylock())
-		pr_emerg("%s: Console was locked! Busting\n", __func__);
-	else
-		pr_emerg("%s: Console was locked!\n", __func__);
-	console_unlock();
-}
-
-static void tegra_pm_restart(char mode, const char *cmd)
-{
-	tegra_pm_flush_console();
-	arm_machine_restart(mode, cmd);
-}
-
 void __init tegra_init_early(void)
 {
-	arm_pm_restart = tegra_pm_restart;
 #ifndef CONFIG_SMP
 	/* For SMP system, initializing the reset handler here is too
 	   late. For non-SMP systems, the function that calls the reset
@@ -445,6 +443,7 @@ void __init tegra_init_early(void)
 	tegra_init_power();
 	tegra_init_cache(true);
 	tegra_init_ahb_gizmo_settings();
+	tegra_init_debug_uart_rate();
 }
 
 static int __init tegra_lp0_vec_arg(char *options)
@@ -477,6 +476,21 @@ static int __init tegra_bootloader_fb_arg(char *options)
 	return 0;
 }
 early_param("tegra_fbmem", tegra_bootloader_fb_arg);
+
+static int __init tegra_sku_override(char *id)
+{
+	char *p = id;
+
+	sku_override = memparse(p, &p);
+
+	return 0;
+}
+early_param("sku_override", tegra_sku_override);
+
+int tegra_get_sku_override(void)
+{
+	return sku_override;
+}
 
 static int __init tegra_vpr_arg(char *options)
 {
@@ -585,6 +599,21 @@ int get_tegra_uart_debug_port_id(void)
 }
 __setup("debug_uartport=", tegra_debug_uartport);
 
+static int __init tegra_image_type(char *options)
+{
+	if (!strcmp(options, "RCK"))
+		board_image_type = rck_image;
+
+	return 0;
+}
+
+enum image_type get_tegra_image_type(void)
+{
+	return board_image_type;
+}
+
+__setup("image=", tegra_image_type);
+
 static int __init tegra_audio_codec_type(char *info)
 {
 	char *p = info;
@@ -680,8 +709,6 @@ int tegra_get_modem_id(void)
 }
 
 __setup("modem_id=", tegra_modem_id);
-
-
 
 /*
  * Tegra has a protected aperture that prevents access by most non-CPU

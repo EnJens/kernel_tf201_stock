@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-tegra/board-harmony-panel.c
  *
- * Copyright (c) 2010-2011, NVIDIA Corporation.
+ * Copyright (c) 2010-2012, NVIDIA Corporation.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -325,12 +325,12 @@ static struct platform_device *harmony_gfx_devices[] __initdata = {
 #if defined(CONFIG_TEGRA_NVMAP)
 	&harmony_nvmap_device,
 #endif
-	&tegra_grhost_device,
 	&tegra_pwfm0_device,
 	&harmony_backlight_device,
 };
 
-int __init harmony_panel_init(void) {
+int __init harmony_panel_init(void)
+{
 	int err;
 	struct resource *res;
 
@@ -353,6 +353,12 @@ int __init harmony_panel_init(void) {
 #if defined(CONFIG_TEGRA_NVMAP)
 	harmony_carveouts[1].base = tegra_carveout_start;
 	harmony_carveouts[1].size = tegra_carveout_size;
+#endif
+
+#ifdef CONFIG_TEGRA_GRHOST
+	err = nvhost_device_register(&tegra_grhost_device);
+	if (err)
+		return err;
 #endif
 
 	err = platform_add_devices(harmony_gfx_devices,

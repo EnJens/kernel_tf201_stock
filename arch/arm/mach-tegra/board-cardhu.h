@@ -42,6 +42,8 @@
 #define BOARD_PMU_PM299   0x0263
 
 /* SKU Information */
+#define BOARD_SKU_B11	0xb11
+
 #define SKU_DCDC_TPS62361_SUPPORT	0x1
 #define SKU_SLT_ULPI_SUPPORT		0x2
 #define SKU_T30S_SUPPORT		0x4
@@ -213,7 +215,6 @@ int cardhu_pm298_gpio_switch_regulator_init(void);
 int cardhu_pm298_regulator_init(void);
 int cardhu_pm299_gpio_switch_regulator_init(void);
 int cardhu_pm299_regulator_init(void);
-void __init cardhu_tsensor_init(void);
 
 #define MPU_TYPE_MPU3050	1
 #define MPU_TYPE_MPU6050	2

@@ -58,6 +58,7 @@
 #define TEGRA_DC_EXT_FLIP_FLAG_INVERT_H	(1 << 0)
 #define TEGRA_DC_EXT_FLIP_FLAG_INVERT_V	(1 << 1)
 #define TEGRA_DC_EXT_FLIP_FLAG_TILED	(1 << 2)
+#define TEGRA_DC_EXT_FLIP_FLAG_CURSOR	(1 << 3)
 
 struct tegra_dc_ext_flip_windowattr {
 	__s32	index;
@@ -297,6 +298,14 @@ struct tegra_dc_ext_control_event_hotplug {
 	__u32 handle;
 };
 
+
+#define TEGRA_DC_EXT_CAPABILITIES_CURSOR_MODE	(1 << 0)
+struct tegra_dc_ext_control_capabilities {
+	__u32 caps;
+	/* Leave some wiggle room for future expansion */
+	__u32 pad[3];
+};
+
 #define TEGRA_DC_EXT_CONTROL_GET_NUM_OUTPUTS \
 	_IOR('C', 0x00, __u32)
 #define TEGRA_DC_EXT_CONTROL_GET_OUTPUT_PROPERTIES \
@@ -305,5 +314,7 @@ struct tegra_dc_ext_control_event_hotplug {
 	_IOWR('C', 0x02, struct tegra_dc_ext_control_output_edid)
 #define TEGRA_DC_EXT_CONTROL_SET_EVENT_MASK \
 	_IOW('C', 0x03, __u32)
+#define TEGRA_DC_EXT_CONTROL_GET_CAPABILITIES \
+	_IOR('C', 0x04, struct tegra_dc_ext_control_capabilities)
 
 #endif /* __TEGRA_DC_EXT_H */

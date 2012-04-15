@@ -567,7 +567,6 @@ static struct i2c_board_info cardhu_i2c8_board_info[] = {
 	},
 };
 
-#ifndef CONFIG_TEGRA_INTERNAL_TSENSOR_EDP_SUPPORT
 static int nct_get_temp(void *_data, long *temp)
 {
 	struct nct1008_data *data = _data;
@@ -626,16 +625,13 @@ static void nct1008_probe_callback(struct nct1008_data *data)
 
 	tegra_thermal_set_device(thermal_device);
 }
-#endif
 
 static struct nct1008_platform_data cardhu_nct1008_pdata = {
 	.supported_hwrev = true,
 	.ext_range = true,
 	.conv_rate = 0x08,
 	.offset = 8, /* 4 * 2C. Bug 844025 - 1C for device accuracies */
-#ifndef CONFIG_TEGRA_INTERNAL_TSENSOR_EDP_SUPPORT
 	.probe_callback = nct1008_probe_callback,
-#endif
 };
 
 static struct i2c_board_info cardhu_i2c4_bq27510_board_info[] = {
@@ -849,10 +845,15 @@ static void mpuirq_init(void)
 		ARRAY_SIZE(inv_mpu_i2c2_board_info));
 }
 
-
 static struct i2c_board_info cardhu_i2c2_isl_board_info[] = {
 	{
 		I2C_BOARD_INFO("isl29028", 0x44),
+	}
+};
+
+static struct i2c_board_info cardhu_i2c2_ltr_board_info[] = {
+	{
+		I2C_BOARD_INFO("LTR_558ALS", 0x23),
 	}
 };
 
@@ -909,8 +910,12 @@ int __init cardhu_sensors_init(void)
 		i2c_register_board_info(4, cardhu_i2c4_bq27510_board_info,
 			ARRAY_SIZE(cardhu_i2c4_bq27510_board_info));
 
-	i2c_register_board_info(2, cardhu_i2c2_isl_board_info,
-		ARRAY_SIZE(cardhu_i2c2_isl_board_info));
+	if (board_info.sku == BOARD_SKU_B11)
+		i2c_register_board_info(2, cardhu_i2c2_ltr_board_info,
+			ARRAY_SIZE(cardhu_i2c2_ltr_board_info));
+	else
+		i2c_register_board_info(2, cardhu_i2c2_isl_board_info,
+			ARRAY_SIZE(cardhu_i2c2_isl_board_info));
 
 	err = cardhu_nct1008_init();
 	if (err)

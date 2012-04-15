@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-tegra/board-whistler-panel.c
  *
- * Copyright (c) 2010-2011, NVIDIA Corporation.
+ * Copyright (c) 2010-2012, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -300,9 +300,6 @@ static struct platform_device *whistler_gfx_devices[] __initdata = {
 #if defined(CONFIG_TEGRA_NVMAP)
 	&whistler_nvmap_device,
 #endif
-#ifdef CONFIG_TEGRA_GRHOST
-	&tegra_grhost_device,
-#endif
 	&whistler_disp1_backlight_device,
 };
 
@@ -314,9 +311,12 @@ struct early_suspend whistler_panel_early_suspender;
 
 static void whistler_panel_early_suspend(struct early_suspend *h)
 {
-	unsigned i;
-	for (i = 0; i < num_registered_fb; i++)
-		fb_blank(registered_fb[i], FB_BLANK_POWERDOWN);
+	/* power down LCD, add use a blank screen for HDMI */
+	if (num_registered_fb > 0)
+		fb_blank(registered_fb[0], FB_BLANK_POWERDOWN);
+	if (num_registered_fb > 1)
+		fb_blank(registered_fb[1], FB_BLANK_NORMAL);
+
 #ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
 	cpufreq_save_default_governor();
 	cpufreq_set_conservative_governor();
@@ -361,6 +361,12 @@ int __init whistler_panel_init(void)
 #if defined(CONFIG_TEGRA_NVMAP)
 	whistler_carveouts[1].base = tegra_carveout_start;
 	whistler_carveouts[1].size = tegra_carveout_size;
+#endif
+
+#ifdef CONFIG_TEGRA_GRHOST
+	err = nvhost_device_register(&tegra_grhost_device);
+	if (err)
+		return err;
 #endif
 
 	err = platform_add_devices(whistler_gfx_devices,

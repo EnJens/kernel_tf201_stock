@@ -418,6 +418,41 @@ static int rt5639_readable_register(
 	}
 }
 
+int rt5639_headset_detect(struct snd_soc_codec *codec, int jack_insert)
+{
+	int jack_type;
+
+	if (jack_insert) {
+		snd_soc_update_bits(codec, RT5639_PWR_ANLG1,
+			RT5639_PWR_LDO2, RT5639_PWR_LDO2);
+		snd_soc_update_bits(codec, RT5639_PWR_ANLG2,
+			RT5639_PWR_MB1, RT5639_PWR_MB1);
+		snd_soc_update_bits(codec, RT5639_MICBIAS,
+			RT5639_MIC1_OVCD_MASK | RT5639_MIC1_OVTH_MASK |
+			RT5639_PWR_CLK25M_MASK | RT5639_PWR_MB_MASK,
+			RT5639_MIC1_OVCD_EN | RT5639_MIC1_OVTH_600UA |
+			RT5639_PWR_MB_PU | RT5639_PWR_CLK25M_PU);
+		snd_soc_update_bits(codec, RT5639_DUMMY1,
+			0x1, 0x1);
+		msleep(50);
+		if (snd_soc_read(codec, RT5639_IRQ_CTRL2) & 0x8)
+			jack_type = RT5639_HEADPHO_DET;
+		else
+			jack_type = RT5639_HEADSET_DET;
+		snd_soc_update_bits(codec, RT5639_IRQ_CTRL2,
+			RT5639_MB1_OC_CLR, 0);
+	} else {
+		snd_soc_update_bits(codec, RT5639_MICBIAS,
+			RT5639_MIC1_OVCD_MASK,
+			RT5639_MIC1_OVCD_DIS);
+
+		jack_type = RT5639_NO_JACK;
+	}
+
+	return jack_type;
+}
+EXPORT_SYMBOL(rt5639_headset_detect);
+
 static const DECLARE_TLV_DB_SCALE(out_vol_tlv, -4650, 150, 0);
 static const DECLARE_TLV_DB_SCALE(dac_vol_tlv, -65625, 375, 0);
 static const DECLARE_TLV_DB_SCALE(in_vol_tlv, -3450, 150, 0);
@@ -622,8 +657,6 @@ static int rt5639_vol_rescale_put(struct snd_kcontrol *kcontrol,
 
 static const struct snd_kcontrol_new rt5639_snd_controls[] = {
 	/* Speaker Output Volume */
-	SOC_DOUBLE("Speaker Playback Switch", RT5639_SPK_VOL,
-		RT5639_L_MUTE_SFT, RT5639_R_MUTE_SFT, 1, 1),
 	SOC_DOUBLE_EXT_TLV("Speaker Playback Volume", RT5639_SPK_VOL,
 		RT5639_L_VOL_SFT, RT5639_R_VOL_SFT, RT5639_VOL_RSCL_RANGE, 0,
 		rt5639_vol_rescale_get, rt5639_vol_rescale_put, out_vol_tlv),

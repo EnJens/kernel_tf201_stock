@@ -1,7 +1,7 @@
 /*
  * arch/arm/mach-tegra/board-aruba-panel.c
  *
- * Copyright (c) 2010-2011, NVIDIA Corporation.
+ * Copyright (c) 2010-2012, NVIDIA Corporation.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -213,9 +213,6 @@ static struct platform_device *aruba_gfx_devices[] __initdata = {
 #if defined(CONFIG_TEGRA_NVMAP)
 	&aruba_nvmap_device,
 #endif
-#ifdef CONFIG_TEGRA_GRHOST
-	&tegra_grhost_device,
-#endif
 	&tegra_pwfm2_device,
 	&aruba_backlight_device,
 };
@@ -228,6 +225,12 @@ int __init aruba_panel_init(void)
 #if defined(CONFIG_TEGRA_NVMAP)
 	aruba_carveouts[1].base = tegra_carveout_start;
 	aruba_carveouts[1].size = tegra_carveout_size;
+#endif
+
+#ifdef CONFIG_TEGRA_GRHOST
+	err = nvhost_device_register(&tegra_grhost_device);
+	if (err)
+		return err;
 #endif
 
 	err = platform_add_devices(aruba_gfx_devices,

@@ -5,19 +5,17 @@
  *
  * Copyright (c) 2010-2012, NVIDIA Corporation.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
+ * This program is distributed in the hope it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "nvhost_acm.h"
@@ -280,17 +278,22 @@ int nvhost_module_set_rate(struct nvhost_device *dev, void *priv,
 		unsigned long rate, int index)
 {
 	struct nvhost_module_client *m;
-	int ret;
+	int i, ret = 0;
 
 	mutex_lock(&client_list_lock);
 	list_for_each_entry(m, &dev->client_list, node) {
 		if (m->priv == priv) {
-			rate = clk_round_rate(dev->clk[index], rate);
-			m->rate[index] = rate;
+			for (i = 0; i < dev->num_clks; i++)
+				m->rate[i] = clk_round_rate(dev->clk[i], rate);
 			break;
 		}
 	}
-	ret = nvhost_module_update_rate(dev, index);
+
+	for (i = 0; i < dev->num_clks; i++) {
+		ret = nvhost_module_update_rate(dev, i);
+		if (ret < 0)
+			break;
+	}
 	mutex_unlock(&client_list_lock);
 	return ret;
 
@@ -400,23 +403,23 @@ static void debug_not_idle(struct nvhost_master *host)
 		struct nvhost_device *dev = host->channels[i].dev;
 		mutex_lock(&dev->lock);
 		if (dev->name)
-			dev_warn(&host->pdev->dev,
-					"tegra_grhost: %s: refcnt %d\n",
-					dev->name, dev->refcount);
+			dev_warn(&host->dev->dev,
+				"tegra_grhost: %s: refcnt %d\n", dev->name,
+				dev->refcount);
 		mutex_unlock(&dev->lock);
 	}
 
 	for (i = 0; i < host->syncpt.nb_mlocks; i++) {
 		int c = atomic_read(&host->syncpt.lock_counts[i]);
 		if (c) {
-			dev_warn(&host->pdev->dev,
+			dev_warn(&host->dev->dev,
 				"tegra_grhost: lock id %d: refcnt %d\n",
 				i, c);
 			lock_released = false;
 		}
 	}
 	if (lock_released)
-		dev_dbg(&host->pdev->dev, "tegra_grhost: all locks released\n");
+		dev_dbg(&host->dev->dev, "tegra_grhost: all locks released\n");
 }
 
 int nvhost_module_suspend(struct nvhost_device *dev, bool system_suspend)

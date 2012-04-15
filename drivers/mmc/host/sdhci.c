@@ -1229,11 +1229,15 @@ static void sdhci_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	host->mrq = mrq;
 
 	/* If polling, assume that the card is always present. */
-	if (host->quirks & SDHCI_QUIRK_BROKEN_CARD_DETECTION)
-		present = true;
-	else
+	if (host->quirks & SDHCI_QUIRK_BROKEN_CARD_DETECTION) {
+		if (host->ops->get_cd)
+			present = host->ops->get_cd(host);
+		else
+			present = true;
+	} else {
 		present = sdhci_readl(host, SDHCI_PRESENT_STATE) &
 				SDHCI_CARD_PRESENT;
+	}
 
 	if (!present || host->flags & SDHCI_DEVICE_DEAD) {
 		host->mrq->cmd->error = -ENOMEDIUM;
@@ -1351,11 +1355,12 @@ static void sdhci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		unsigned int clock;
 
 		/* In case of UHS-I modes, set High Speed Enable */
-		if ((ios->timing == MMC_TIMING_UHS_SDR50) ||
+		if (((ios->timing == MMC_TIMING_UHS_SDR50) ||
 		    (ios->timing == MMC_TIMING_UHS_SDR104) ||
 		    (ios->timing == MMC_TIMING_UHS_DDR50) ||
 		    (ios->timing == MMC_TIMING_UHS_SDR25) ||
 		    (ios->timing == MMC_TIMING_UHS_SDR12))
+		    && !(host->quirks & SDHCI_QUIRK_NO_HISPD_BIT))
 			ctrl |= SDHCI_CTRL_HISPD;
 
 		ctrl_2 = sdhci_readw(host, SDHCI_HOST_CONTROL2);
@@ -1811,6 +1816,16 @@ static void sdhci_enable_preset_value(struct mmc_host *mmc, bool enable)
 
 	/* Host Controller v3.00 defines preset value registers */
 	if (host->version < SDHCI_SPEC_300)
+		return;
+
+	/*
+	 * Enabling preset value would make programming clock
+	 * divider ineffective. The controller would use the
+	 * values present in the preset value registers. In
+	 * case of non-standard clock, let the platform driver
+	 * decide whether to enable preset or not.
+	 */
+	if (host->quirks & SDHCI_QUIRK_NONSTANDARD_CLOCK)
 		return;
 
 	spin_lock_irqsave(&host->lock, flags);
@@ -2317,10 +2332,10 @@ int sdhci_suspend_host(struct sdhci_host *host, pm_message_t state)
 			host->tuning_count * HZ);
 	}
 
-	if (mmc->card && (mmc->card->type != MMC_TYPE_SDIO))
+	if (mmc->card)
 		ret = mmc_suspend_host(host->mmc);
 
-	if (host->flags & MMC_PM_KEEP_POWER)
+	if (mmc->pm_flags & MMC_PM_KEEP_POWER)
 		host->card_int_set = sdhci_readl(host, SDHCI_INT_ENABLE) &
 			SDHCI_INT_CARD_INT;
 
@@ -2361,15 +2376,12 @@ int sdhci_resume_host(struct sdhci_host *host)
 	mmiowb();
 
 	if (mmc->card) {
-		if (mmc->card->type != MMC_TYPE_SDIO) {
-			ret = mmc_resume_host(host->mmc);
-		} else {
-			/* Enable card interrupt as it is overwritten in sdhci_init */
-			if ((mmc->caps & MMC_CAP_SDIO_IRQ) &&
-				(mmc->pm_flags & MMC_PM_KEEP_POWER))
-					if (host->card_int_set)
-						mmc->ops->enable_sdio_irq(mmc, true);
-		}
+		ret = mmc_resume_host(host->mmc);
+		/* Enable card interrupt as it is overwritten in sdhci_init */
+		if ((mmc->caps & MMC_CAP_SDIO_IRQ) &&
+			(mmc->pm_flags & MMC_PM_KEEP_POWER))
+				if (host->card_int_set)
+					mmc->ops->enable_sdio_irq(mmc, true);
 	}
 
 	sdhci_enable_card_detection(host);
@@ -2619,7 +2631,7 @@ int sdhci_add_host(struct sdhci_host *host)
 		mmc->caps |= MMC_CAP_SD_HIGHSPEED | MMC_CAP_MMC_HIGHSPEED;
 
 	if ((host->quirks & SDHCI_QUIRK_BROKEN_CARD_DETECTION) &&
-	    mmc_card_is_removable(mmc))
+	    mmc_card_is_removable(mmc) && !(host->ops->get_cd))
 		mmc->caps |= MMC_CAP_NEEDS_POLL;
 
 	/* UHS-I mode(s) supported by the host controller. */

@@ -5,24 +5,21 @@
  *
  * Copyright (c) 2010-2012, NVIDIA Corporation.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
+ * This program is distributed in the hope it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  *
- * You should have received a copy of the GNU General Public License along
- * with this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include "nvhost_channel.h"
 #include "dev.h"
-#include "nvhost_hwctx.h"
 #include "nvhost_job.h"
 #include <trace/events/nvhost.h>
 #include <linux/nvhost_ioctl.h>
@@ -54,7 +51,7 @@ int nvhost_channel_init(struct nvhost_channel *ch,
 	/* Map IO memory related to nvhost_device */
 	if (ndev->moduleid != NVHOST_MODULE_NONE) {
 		/* First one is host1x - skip that */
-		r = platform_get_resource(dev->pdev,
+		r = nvhost_get_resource(dev->dev,
 				IORESOURCE_MEM, ndev->moduleid + 1);
 		if (!r)
 			goto fail;

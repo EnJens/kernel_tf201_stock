@@ -107,8 +107,8 @@ extern struct platform_device tegra_uartb_device;
 extern struct platform_device tegra_uartc_device;
 extern struct platform_device tegra_uartd_device;
 extern struct platform_device tegra_uarte_device;
-extern struct platform_device tegra_grhost_device;
 extern struct platform_device tegra_avp_device;
+extern struct nvhost_device tegra_grhost_device;
 extern struct nvhost_device nvavp_device;
 extern struct platform_device tegra_aes_device;
 #if !defined(CONFIG_ARCH_TEGRA_2x_SOC)
@@ -127,6 +127,6 @@ extern struct platform_device debug_uarte_device;
 extern struct nvhost_device tegra_disp1_device;
 extern struct platform_device tegra_nvmap_device;
 
-void tegra_init_debug_uart_rate(void);
+void __init tegra_init_debug_uart_rate(void);
 
 #endif

@@ -5,7 +5,7 @@
  * Author: Li Yang <leoli@freescale.com>
  *         Jiang Bo <tanya.jiang@freescale.com>
  *
- * Copyright (C) 2010-2011 NVIDIA Corporation
+ * Copyright (C) 2010-2012 NVIDIA Corporation
  *
  * Description:
  * Freescale high-speed USB SOC DR module device controller driver.
@@ -51,6 +51,8 @@
 #include <asm/unaligned.h>
 #include <asm/dma.h>
 
+#include <mach/iomap.h>
+
 #include "fsl_usb2_udc.h"
 
 #ifdef CONFIG_ARCH_TEGRA
@@ -62,6 +64,7 @@
 #define	DRIVER_VERSION	"Apr 20, 2007"
 
 #define	DMA_ADDR_INVALID	(~(dma_addr_t)0)
+#define USB1_PREFETCH_ID	6
 
 #ifdef CONFIG_ARCH_TEGRA
 static const char driver_name[] = "fsl-tegra-udc";
@@ -1349,6 +1352,14 @@ static int can_pullup(struct fsl_udc *udc)
 	return udc->driver && udc->softconnect && udc->vbus_active;
 }
 
+static int fsl_set_selfpowered(struct usb_gadget * gadget, int is_on)
+{
+	struct fsl_udc *udc;
+	udc = container_of(gadget, struct fsl_udc, gadget);
+	udc->selfpowered = (is_on != 0);
+	return 0;
+}
+
 /* Notify controller that VBUS is powered, Called by whatever
    detects VBUS sessions */
 static int fsl_vbus_session(struct usb_gadget *gadget, int is_active)
@@ -1402,6 +1413,10 @@ static int fsl_vbus_session(struct usb_gadget *gadget, int is_active)
 			schedule_delayed_work(&udc->work,
 				USB_CHARGER_DETECTION_WAIT_TIME_MS);
 		}
+
+#ifndef CONFIG_USB_G_ANDROID
+		return 0;
+#endif
 	}
 
 	spin_lock_irqsave(&udc->lock, flags);
@@ -1470,7 +1485,7 @@ static struct usb_gadget_ops fsl_gadget_ops = {
 #ifndef CONFIG_USB_ANDROID
 	.wakeup = fsl_wakeup,
 #endif
-/*	.set_selfpowered = fsl_set_selfpowered,	*/ /* Always selfpowered */
+	.set_selfpowered = fsl_set_selfpowered,
 	.vbus_session = fsl_vbus_session,
 	.vbus_draw = fsl_vbus_draw,
 	.pullup = fsl_pullup,
@@ -1564,7 +1579,8 @@ static void ch9getstatus(struct fsl_udc *udc, u8 request_type, u16 value,
 
 	if ((request_type & USB_RECIP_MASK) == USB_RECIP_DEVICE) {
 		/* Get device status */
-		tmp = 1 << USB_DEVICE_SELF_POWERED;
+		if (udc->selfpowered)
+			tmp = 1 << USB_DEVICE_SELF_POWERED;
 		tmp |= udc->remote_wakeup << USB_DEVICE_REMOTE_WAKEUP;
 	} else if ((request_type & USB_RECIP_MASK) == USB_RECIP_INTERFACE) {
 		/* Get interface status */
@@ -2282,6 +2298,11 @@ static irqreturn_t fsl_udc_irq(int irq, void *_udc)
 		spin_unlock_irqrestore(&udc->lock, flags);
 		return IRQ_NONE;
 	}
+
+#ifdef CONFIG_ARCH_TEGRA
+	/* Fence read for coherency of AHB master intiated writes */
+	readb(IO_ADDRESS(IO_PPCS_PHYS + USB1_PREFETCH_ID));
+#endif
 #ifndef CONFIG_TEGRA_SILICON_PLATFORM
 	{
 		u32 temp = fsl_readl(&usb_sys_regs->vbus_sensors);
@@ -3037,9 +3058,9 @@ static int __init fsl_udc_probe(struct platform_device *pdev)
 	/* Get the regulator for drawing the vbus current in udc driver */
 	udc_controller->vbus_regulator = regulator_get(NULL, "usb_bat_chg");
 	if (IS_ERR(udc_controller->vbus_regulator)) {
-		dev_err(&pdev->dev,
-			"can't get charge regulator,err:%ld\n",
-			PTR_ERR(udc_controller->vbus_regulator));
+		dev_info(&pdev->dev,
+			"usb_bat_chg regulator not registered:"
+				" USB charging will not be enabled\n");
 		udc_controller->vbus_regulator = NULL;
 	}
 

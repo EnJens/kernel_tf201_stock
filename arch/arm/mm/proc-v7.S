@@ -218,13 +218,15 @@ ENDPROC(cpu_v7_set_pte_ext)
 .equ	NMRR,	0xc0e044e0
 
 /* Suspend/resume support: derived from arch/arm/mach-s5pv210/sleep.S */
-.globl	cpu_v7_suspend_size
-.equ	cpu_v7_suspend_size, (4 * (10 + 4 + (16 * 2) + (16 * 2)))
-/* 10 CP15 registers
- * 4 CP14 registers
- * 16x2 CP14 breakpoint registers (maximum)
- * 16x2 CP14 watchpoint registers (maximum)
+.local	cpu_v7_debug_suspend_size
+#ifdef CONFIG_ARM_SAVE_DEBUG_CONTEXT
+/*
+ * Debug context:
+ *	8 CP14 registers
+ *	16x2 CP14 breakpoint registers (maximum)
+ *	16x2 CP14 watchpoint registers (maximum)
  */
+.equ	cpu_v7_debug_suspend_size, (4 * (8 + (16 * 2) + (16 * 2)))
 
 .macro  save_brkpt cm
 	mrc	p14, 0, r4, c0, \cm, 4
@@ -250,6 +252,12 @@ ENDPROC(cpu_v7_set_pte_ext)
 	mcr	p14, 0, r5, c0, \cm, 7
 .endm
 
+#else
+.equ	cpu_v7_debug_suspend_size, 0
+#endif
+
+.globl	cpu_v7_suspend_size
+.equ	cpu_v7_suspend_size, (4 * 10) + cpu_v7_debug_suspend_size
 #ifdef CONFIG_PM_SLEEP
 ENTRY(cpu_v7_do_suspend)
 	stmfd	sp!, {r0, r3 - r11, lr}
@@ -266,12 +274,26 @@ ENTRY(cpu_v7_do_suspend)
 	mrc	p15, 0, r11, c1, c0, 2	@ Co-processor access control
 	stmia	r0!, {r6 - r11}
 
+#ifdef CONFIG_ARM_SAVE_DEBUG_CONTEXT
 	/* Save CP14 debug controller context */
-	mrc	p14, 0, r4, c0, c1, 0	@ DSCR
-	mrc	p14, 0, r5, c0, c6, 0	@ WFAR
-	mrc	p14, 0, r6, c0, c7, 0	@ VCR
-	mrc	p14, 0, r7, c7, c9, 6	@ CLAIM
+
+	mrc	p14, 0, r4, c0, c2, 2	@ DBGDSCRext
+	mrc	p14, 0, r5, c0, c6, 0	@ DBGWFAR
+	mrc	p14, 0, r6, c0, c7, 0	@ DBGVCR
+	mrc	p14, 0, r7, c7, c9, 6	@ DBGCLAIMCLR
 	stmia	r0!, {r4-r7}
+
+	mrc	p14, 0, r4, c0, c10, 0	@ DBGDSCCR
+	mrc	p14, 0, r5, c0, c11, 0	@ DBGDSMCR
+	stmia	r0!, {r4-r5}
+
+	tst	r4, #(1 << 29)		@ DBGDSCRext.TXfull
+	mrcne	p14, 0, r4, c0, c3, 2	@ DBGDTRTXext
+	strne	r4, [r0], #4
+
+	tst	r4, #(1 << 30)		@ DBGDSCRext.RXfull
+	mrcne	p14, 0, r4, c0, c0, 2	@ DBGDTRRXext
+	strne	r4, [r0], #4
 
 	mrc	p14, 0, r8, c0, c0, 0   @ read IDR
 	mov	r3, r8, lsr #24
@@ -328,7 +350,7 @@ ENTRY(cpu_v7_do_suspend)
 	save_wpt	c2
 	save_wpt	c1
 	save_wpt	c0
-
+#endif
 	ldmfd	sp!, {r0, r3 - r11, pc}
 ENDPROC(cpu_v7_do_suspend)
 
@@ -358,12 +380,25 @@ ENTRY(cpu_v7_do_resume)
 	mcr	p15, 0, r5, c10, c2, 1	@ write NMRR
 	isb
 
+#ifdef CONFIG_ARM_SAVE_DEBUG_CONTEXT
 	/* Restore CP14 debug controller context */
 
 	ldmia	r0!, {r2 - r5}
-	mcr	p14, 0, r3, c0, c6, 0	@ WFAR
-	mcr	p14, 0, r4, c0, c7, 0	@ VCR
-	mcr	p14, 0, r5, c7, c8, 6	@ CLAIM
+	mcr	p14, 0, r3, c0, c6, 0	@ DBGWFAR
+	mcr	p14, 0, r4, c0, c7, 0	@ DBGVCR
+	mcr	p14, 0, r5, c7, c8, 6	@ DBGCLAIMSET
+
+	ldmia	r0!, {r4-r5}
+	mcr	p14, 0, r4, c0, c10, 0	@ DBGDSCCR
+	mcr	p14, 0, r5, c0, c11, 0	@ DBGDSMCR
+
+	tst	r2, #(1 << 29)		@ DBGDSCRext.TXfull
+	ldrne	r4, [r0], #4
+	mcrne	p14, 0, r4, c0, c3, 2	@ DBGDTRTXext
+
+	tst	r2, #(1 << 30)		@ DBGDSCRext.RXfull
+	ldrne	r4, [r0], #4
+	mcrne	p14, 0, r4, c0, c0, 2	@ DBGDTRRXext
 
 	mrc	p14, 0, r8, c0, c0, 0   @ read IDR
 	mov	r3, r8, lsr #24
@@ -425,6 +460,7 @@ start_restore_wpt:
 
 	mcr	p14, 0, r2, c0, c2, 2	@ DSCR
 	isb
+#endif
 	dsb
 	mov	r0, r9			@ control register
 	mov	r2, r7, lsr #14		@ get TTB0 base
