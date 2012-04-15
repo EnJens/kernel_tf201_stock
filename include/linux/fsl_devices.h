@@ -77,6 +77,11 @@ struct fsl_usb2_platform_data {
 
 	int		(*init)(struct platform_device *);
 	void		(*exit)(struct platform_device *);
+#ifdef CONFIG_MACH_TF201
+	int		(*suspend)(struct platform_device *);
+	int		(*resume)(struct platform_device *);
+	int 	(*vbus_session)(int vbus_active, int is_active);
+#endif
 	void __iomem	*regs;		/* ioremap'd register base */
 	struct clk	*clk;
 	unsigned	big_endian_mmio:1;
