@@ -986,10 +986,10 @@ static struct tegra_tsensor_pmu_data  tpdata = {
 	.pmu_i2c_addr = 0x2D,
 };
 
-void __init tf201_tsensor_init(void)
+/*void __init tf201_tsensor_init(void)
 {
 	tegra3_tsensor_init(&tpdata);
-}
+}*/
 
 #ifdef CONFIG_TEGRA_EDP_LIMITS
 
@@ -1030,7 +1030,6 @@ static struct platform_device tf201_charger_device = {
 
 static int __init tf201_charger_late_init(void)
 {
-	// required because bootloader identifies as cardhu
 	if (!machine_is_tf201())
 		return 0;
 

@@ -789,7 +789,7 @@ static void __init tegra_tf201_init(void)
 	tf201_uart_init();
 	snprintf(tf201_chipid, sizeof(tf201_chipid), "%016llx",
 		tegra_chip_uid());
-	tf201_tsensor_init();
+//	tf201_tsensor_init();
 	platform_add_devices(tf201_devices, ARRAY_SIZE(tf201_devices));
 	tf201_sdhci_init();
 	tf201_regulator_init();
