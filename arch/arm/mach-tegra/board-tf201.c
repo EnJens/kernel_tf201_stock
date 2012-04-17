@@ -714,7 +714,7 @@ static struct fsl_usb2_platform_data tegra_udc_pdata = {
 	// TODO: point to board-tf201-cabledetect.c functions
 	.suspend = NULL,
 	.resume = NULL,
-	.vbus_session = NULL;
+	.vbus_session = NULL,
 };
 
 
