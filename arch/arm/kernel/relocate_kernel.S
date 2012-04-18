@@ -9,6 +9,9 @@
 #ifdef CONFIG_ARCH_S5PV210
 #include <mach/map.h>
 #endif
+#if defined(CONFIG_ARCH_TEGRA_2x_SOC) || defined(CONFIG_ARCH_TEGRA_3x_SOC)
+#include <mach/iomap.h>
+#endif
 #endif
 
 	.globl relocate_new_kernel
@@ -89,7 +92,7 @@ hardboot:
 	ldr	r1, =KEXEC_HB_PAGE_MAGIC
 	str	r1, [r0]
 
-#ifdef CONFIG_ARCH_S5PV210
+#if defined(CONFIG_ARCH_S5PV210)
 	/* Hard reset via watchdog, decompressor jumps to kernel. */
 	ldr	r0, =S3C_PA_WDT
 	mov	r1, #0x8000
@@ -99,6 +102,12 @@ hardboot:
 	mov	r1, #8
 	str	r1, [r0, #8]
 	movw	r1, #0x8021
+	str	r1, [r0]
+loop:	b	loop
+#elif defined(CONFIG_ARCH_TEGRA_2x_SOC) || defined(CONFIG_ARCH_TEGRA_3x_SOC)
+	ldr     r0, =TEGRA_PMC_BASE
+	ldr	r1, [r0]
+	orr	r1, r1, #0x10
 	str	r1, [r0]
 loop:	b	loop
 #else
