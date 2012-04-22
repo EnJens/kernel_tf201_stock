@@ -33,7 +33,7 @@
 #define PLAT_PHYS_OFFSET		UL(0x80000000)
 #define END_MEM				UL(0xC0000000)
 #if defined(CONFIG_KEXEC_HARDBOOT)
-#define KEXEC_HB_PAGE_ADDR 		UL(0xBFE00000)
+#define KEXEC_HB_PAGE_ADDR 		UL(0xBEC00000)
 #endif
 #endif
 
