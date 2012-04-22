@@ -130,7 +130,7 @@ void machine_kexec(struct kimage *image)
 	outer_flush_all();
 	outer_disable();
 	cpu_proc_fin();
-	outer_inv_all();
+//	outer_inv_all();
 	flush_cache_all();
 
 	/* Must call cpu_reset via physical address since ARMv7 (& v6) stalls the
