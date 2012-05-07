@@ -44,7 +44,6 @@
 #include <linux/memblock.h>
 #include <linux/spi-tegra.h>
 #include <linux/nfc/pn544.h>
-#include <linux/fsl_devices.h>
 
 #include <sound/wm8903.h>
 
@@ -62,7 +61,6 @@
 #include <mach/board-tf201-misc.h>
 #include <mach/thermal.h>
 #include <mach/pci.h>
-
 
 #include "board.h"
 #include "clock.h"
@@ -711,16 +709,6 @@ static struct usb_phy_plat_data tegra_usb_phy_pdata[] = {
 	},
 };
 
-static struct fsl_usb2_platform_data tegra_udc_pdata = {
-    .operating_mode = FSL_USB2_DR_DEVICE,
-    .phy_mode   = FSL_USB2_PHY_UTMI,
-	// TODO: point to board-tf201-cabledetect.c functions
-	.suspend = NULL,
-	.resume = NULL,
-	.vbus_session = NULL,
-};
-
-
 static void tf201_usb_init(void)
 {
 	tegra_usb_phy_init(tegra_usb_phy_pdata,
@@ -731,7 +719,6 @@ static void tf201_usb_init(void)
 
 	tegra_ehci3_device.dev.platform_data = &tegra_ehci_pdata[2];
 	platform_device_register(&tegra_ehci3_device);
-	tegra_udc_device.dev.platform_data = &tegra_udc_pdata;
 }
 #else
 static void tf201_usb_init(void) { }
@@ -785,7 +772,6 @@ static void __init tegra_tf201_init(void)
 	tf201_i2c_init();
 	tf201_spi_init();
 	tf201_usb_init();
-	tf201_cabledetect_init();
 #ifdef CONFIG_TEGRA_EDP_LIMITS
 	tf201_edp_init();
 #endif

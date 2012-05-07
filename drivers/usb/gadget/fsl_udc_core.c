@@ -1372,8 +1372,6 @@ static int fsl_vbus_session(struct usb_gadget *gadget, int is_active)
 	VDBG("VBUS %s", is_active ? "on" : "off");
 
 	if (udc->transceiver) {
-		if(udc->pdata->vbus_session)
-			udc->pdata->vbus_session(udc->vbus_active, is_active);
 		if (udc->vbus_active && !is_active) {
 			/* If cable disconnected, cancel any delayed work */
 			cancel_delayed_work(&udc->work);
@@ -3193,9 +3191,6 @@ static int fsl_udc_suspend(struct platform_device *pdev, pm_message_t state)
  *-----------------------------------------------------------------*/
 static int fsl_udc_resume(struct platform_device *pdev)
 {
-#ifdef CONFIG_MACH_TF201
-	struct fsl_usb2_platform_data *pdata = udc_controller->pdata;
-#endif
 	if (udc_controller->transceiver) {
 		fsl_udc_clk_resume(true);
 		if (!(fsl_readl(&usb_sys_regs->vbus_wakeup) & USB_SYS_ID_PIN_STATUS)) {
@@ -3207,11 +3202,6 @@ static int fsl_udc_resume(struct platform_device *pdev)
 		if (!(fsl_readl(&usb_sys_regs->vbus_wakeup) & USB_SYS_VBUS_STATUS)) {
 			/* if there is no VBUS then power down the clocks and return */
 			fsl_udc_clk_suspend(false);
-#ifdef CONFIG_MACH_TF201
-
-			if(pdata->suspend)
-				pdata->suspend(pdev);
-#endif
 			return 0;
 		} else {
 			fsl_udc_clk_suspend(false);
@@ -3237,27 +3227,9 @@ static int fsl_udc_resume(struct platform_device *pdev)
 	/* Power down the phy if cable is not connected */
 	if (!(fsl_readl(&usb_sys_regs->vbus_wakeup) & USB_SYS_VBUS_STATUS))
 		fsl_udc_clk_suspend(false);
-	pdata->resume(pdev);
+
 	return 0;
 }
-
-
-/* ASUS Specific ac status */
-int fsl_get_ac_connected(void)
-{
-	int val=0;
-	switch(fsl_readl(&dr_regs->portsc1) & PORTSCX_LINE_STATUS_BITS) {
-		case PORTSCX_LINE_STATUS_SE0:
-        case PORTSCX_LINE_STATUS_JSTATE:
-        case PORTSCX_LINE_STATUS_KSTATE:
-        default:
-	         val = 0; break;
-        case PORTSCX_LINE_STATUS_UNDEF:
-            val = 1; break;
-    }
-	return val;
-};
-EXPORT_SYMBOL(fsl_get_ac_connected);
 
 /*-------------------------------------------------------------------------
 	Register entry point for the peripheral controller driver

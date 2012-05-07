@@ -168,7 +168,6 @@ obj-${CONFIG_MACH_TF201}               += board-tf201-memory.o
 obj-${CONFIG_MACH_TF201}               += board-tf201-powermon.o
 obj-${CONFIG_MACH_TF201}               += board-tf201-misc.o
 obj-${CONFIG_MACH_TF201}               += board-tf201-vibrator.o
-obj-${CONFIG_MACH_TF201}               += board-tf201-cabledetect.o
 
 obj-${CONFIG_MACH_KAI}                  += board-touch-kai-synaptics-spi.o
 obj-y                                   += board-touch-raydium_spi.o

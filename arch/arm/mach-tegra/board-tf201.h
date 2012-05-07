@@ -219,8 +219,6 @@ int tf201_pm298_regulator_init(void);
 int tf201_pm299_gpio_switch_regulator_init(void);
 int tf201_pm299_regulator_init(void);
 void __init tf201_tsensor_init(void);
-void __init tf201_cabledetect_init(void);
-
 #define TOUCH_GPIO_IRQ_ATMEL_T9	TEGRA_GPIO_PH4
 #define TOUCH_GPIO_RST_ATMEL_T9	TEGRA_GPIO_PH6
 #define TOUCH_BUS_ATMEL_T9	1
