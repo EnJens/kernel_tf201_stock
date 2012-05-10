@@ -56,6 +56,7 @@ static struct regulator_consumer_supply tps6591x_vdd1_supply_skubit0_0[] = {
 };
 
 static struct regulator_consumer_supply tps6591x_vdd1_supply_skubit0_1[] = {
+	REGULATOR_SUPPLY("vdd_core", NULL),
 	REGULATOR_SUPPLY("en_vddio_ddr_1v2", NULL),
 };
 
