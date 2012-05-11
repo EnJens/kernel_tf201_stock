@@ -768,7 +768,7 @@ static void __init tegra_tf201_init(void)
 	tegra_clk_init_from_table(tf201_clk_init_table);
 	tf201_pinmux_init();
 	tf201_misc_init();
-       tegra_booting_info( );
+       tegra_booting_info();
 	tf201_i2c_init();
 	tf201_spi_init();
 	tf201_usb_init();
@@ -782,9 +782,9 @@ static void __init tegra_tf201_init(void)
 	platform_add_devices(tf201_devices, ARRAY_SIZE(tf201_devices));
 	tf201_sdhci_init();
 	tf201_regulator_init();
-	tf201_gpio_switch_regulator_init();
+	//tf201_gpio_switch_regulator_init();
 	tf201_suspend_init();
-	tf201_power_off_init();
+	//tf201_power_off_init();
 	tf201_touch_init();
 	tf201_gps_init();
 	tf201_kbc_init();
