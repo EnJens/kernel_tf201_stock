@@ -45,7 +45,7 @@
 #include <mach/iomap.h>
 #include <mach/io.h>
 #include <mach/i2s.h>
-#include <mach/tegra_wm8753_pdata.h>
+#include <mach/tegra_asoc_pdata.h>
 #include <sound/tlv320aic326x.h>
 
 #include <asm/mach-types.h>
@@ -222,32 +222,6 @@ static void __init whistler_setup_bluesleep(void)
 	return;
 }
 
-static struct tegra_utmip_config utmi_phy_config[] = {
-	[0] = {
-			.hssync_start_delay = 9,
-			.idle_wait_delay = 17,
-			.elastic_limit = 16,
-			.term_range_adj = 6,
-			.xcvr_setup = 15,
-			.xcvr_lsfslew = 2,
-			.xcvr_lsrslew = 2,
-		},
-	[1] = {
-			.hssync_start_delay = 9,
-			.idle_wait_delay = 17,
-			.elastic_limit = 16,
-			.term_range_adj = 6,
-			.xcvr_setup = 8,
-			.xcvr_lsfslew = 2,
-			.xcvr_lsrslew = 2,
-		},
-};
-
-static struct tegra_ulpi_config ulpi_phy_config = {
-	.reset_gpio = TEGRA_GPIO_PG2,
-	.clk = "cdev2",
-};
-
 static __initdata struct tegra_clk_init_table whistler_clk_init_table[] = {
 	/* name		parent		rate		enabled */
 	{ "pwm",	"clk_32k",	32768,		false},
@@ -266,6 +240,7 @@ static struct tegra_i2c_platform_data whistler_i2c1_platform_data = {
 	.scl_gpio		= {TEGRA_GPIO_PC4, 0},
 	.sda_gpio		= {TEGRA_GPIO_PC5, 0},
 	.arb_recovery = arb_lost_recovery,
+	.slave_addr = 0xFC,
 };
 
 static const struct tegra_pingroup_config i2c2_ddc = {
@@ -281,12 +256,13 @@ static const struct tegra_pingroup_config i2c2_gen2 = {
 static struct tegra_i2c_platform_data whistler_i2c2_platform_data = {
 	.adapter_nr	= 1,
 	.bus_count	= 2,
-	.bus_clk_rate	= { 100000, 100000 },
+	.bus_clk_rate	= { 10000, 100000 },
 	.bus_mux	= { &i2c2_ddc, &i2c2_gen2 },
 	.bus_mux_len	= { 1, 1 },
 	.scl_gpio		= {0, TEGRA_GPIO_PT5},
 	.sda_gpio		= {0, TEGRA_GPIO_PT6},
 	.arb_recovery = arb_lost_recovery,
+	.slave_addr = 0xFC,
 };
 
 static struct tegra_i2c_platform_data whistler_i2c3_platform_data = {
@@ -296,6 +272,7 @@ static struct tegra_i2c_platform_data whistler_i2c3_platform_data = {
 	.scl_gpio		= {TEGRA_GPIO_PBB2, 0},
 	.sda_gpio		= {TEGRA_GPIO_PBB3, 0},
 	.arb_recovery = arb_lost_recovery,
+	.slave_addr = 0xFC,
 };
 
 static struct tegra_i2c_platform_data whistler_dvc_platform_data = {
@@ -375,7 +352,7 @@ static struct platform_device tegra_camera = {
 	.id = -1,
 };
 
-static struct tegra_wm8753_platform_data whistler_audio_pdata = {
+static struct tegra_asoc_platform_data whistler_audio_pdata = {
 	.gpio_spkr_en = -1,
 	.gpio_hp_det = TEGRA_GPIO_HP_DET,
 	.gpio_hp_mute = -1,
@@ -384,7 +361,7 @@ static struct tegra_wm8753_platform_data whistler_audio_pdata = {
 	.debounce_time_hp = 200,
 };
 
-static struct platform_device whistler_audio_device1 = {
+static struct platform_device whistler_audio_aic326x_device = {
 	.name	= "tegra-snd-aic326x",
 	.id	= 0,
 	.dev	= {
@@ -392,7 +369,7 @@ static struct platform_device whistler_audio_device1 = {
 	},
 };
 
-static struct platform_device whistler_audio_device2 = {
+static struct platform_device whistler_audio_wm8753_device = {
 	.name	= "tegra-snd-wm8753",
 	.id	= 0,
 	.dev	= {
@@ -418,8 +395,8 @@ static struct platform_device *whistler_devices[] __initdata = {
 	&baseband_dit_device,
 	&whistler_bcm4329_rfkill_device,
 	&tegra_pcm_device,
-	&whistler_audio_device1,
-	&whistler_audio_device2,
+	&whistler_audio_aic326x_device,
+	&whistler_audio_wm8753_device,
 };
 
 static struct synaptics_i2c_rmi_platform_data synaptics_pdata = {
@@ -452,61 +429,95 @@ static int __init whistler_scroll_init(void)
 	return 0;
 }
 
-static struct usb_phy_plat_data tegra_usb_phy_pdata[] = {
-	[0] = {
-			.instance = 0,
-			.vbus_irq = MAX8907C_INT_BASE + MAX8907C_IRQ_VCHG_DC_R,
-			.vbus_gpio = USB1_VBUS_GPIO,
-	},
-	[1] = {
-			.instance = 1,
-			.vbus_gpio = -1,
-	},
-	[2] = {
-			.instance = 2,
-			.vbus_gpio = -1,
-	},
-};
-
-static struct tegra_ehci_platform_data tegra_ehci_pdata[] = {
-	[0] = {
-			.phy_config = &utmi_phy_config[0],
-			.operating_mode = TEGRA_USB_HOST,
-			.power_down_on_bus_suspend = 1,
-			.default_enable = false,
-		},
-	[1] = {
-			.phy_config = &ulpi_phy_config,
-			.operating_mode = TEGRA_USB_HOST,
-			.power_down_on_bus_suspend = 1,
-			.default_enable = false,
-		},
-	[2] = {
-			.phy_config = &utmi_phy_config[1],
-			.operating_mode = TEGRA_USB_HOST,
-			.power_down_on_bus_suspend = 1,
-			.default_enable = false,
-	},
-};
-
-static struct tegra_otg_platform_data tegra_otg_pdata = {
-	.ehci_device = &tegra_ehci1_device,
-	.ehci_pdata = &tegra_ehci_pdata[0],
-};
-
 static int __init whistler_gps_init(void)
 {
 	tegra_gpio_enable(TEGRA_GPIO_PU4);
 	return 0;
 }
 
+static struct tegra_usb_platform_data tegra_udc_pdata = {
+	.port_otg = true,
+	.has_hostpc = false,
+	.phy_intf = TEGRA_USB_PHY_INTF_UTMI,
+	.op_mode = TEGRA_USB_OPMODE_DEVICE,
+	.u_data.dev = {
+		.vbus_pmu_irq = MAX8907C_INT_BASE + MAX8907C_IRQ_VCHG_DC_R,
+		.vbus_gpio = -1,
+		.charging_supported = false,
+		.remote_wakeup_supported = false,
+	},
+	.u_cfg.utmi = {
+		.hssync_start_delay = 0,
+		.elastic_limit = 16,
+		.idle_wait_delay = 17,
+		.term_range_adj = 6,
+		.xcvr_setup = 8,
+		.xcvr_lsfslew = 2,
+		.xcvr_lsrslew = 2,
+		.xcvr_setup_offset = 0,
+		.xcvr_use_fuses = 1,
+	},
+};
+
+static struct tegra_usb_platform_data tegra_ehci1_utmi_pdata = {
+	.port_otg = true,
+	.has_hostpc = false,
+	.phy_intf = TEGRA_USB_PHY_INTF_UTMI,
+	.op_mode	= TEGRA_USB_OPMODE_HOST,
+	.u_data.host = {
+		.vbus_gpio = TEGRA_GPIO_PN6,
+		.vbus_reg = NULL,
+		.hot_plug = true,
+		.remote_wakeup_supported = false,
+		.power_off_on_suspend = true,
+	},
+	.u_cfg.utmi = {
+		.hssync_start_delay = 9,
+		.elastic_limit = 16,
+		.idle_wait_delay = 17,
+		.term_range_adj = 6,
+		.xcvr_setup = 8,
+		.xcvr_lsfslew = 2,
+		.xcvr_lsrslew = 2,
+	},
+};
+
+static struct tegra_usb_platform_data tegra_ehci3_utmi_pdata = {
+	.port_otg = false,
+	.has_hostpc = false,
+	.phy_intf = TEGRA_USB_PHY_INTF_UTMI,
+	.op_mode	= TEGRA_USB_OPMODE_HOST,
+	.u_data.host = {
+		.vbus_gpio = TEGRA_GPIO_PD3,
+		.vbus_reg = NULL,
+		.hot_plug = true,
+		.remote_wakeup_supported = false,
+		.power_off_on_suspend = true,
+	},
+	.u_cfg.utmi = {
+		.hssync_start_delay = 9,
+		.elastic_limit = 16,
+		.idle_wait_delay = 17,
+		.term_range_adj = 6,
+		.xcvr_setup = 8,
+		.xcvr_lsfslew = 2,
+		.xcvr_lsrslew = 2,
+	},
+};
+
+static struct tegra_usb_otg_data tegra_otg_pdata = {
+	.ehci_device = &tegra_ehci1_device,
+	.ehci_pdata = &tegra_ehci1_utmi_pdata,
+};
+
+#define SERIAL_NUMBER_LENGTH 20
+static char usb_serial_num[SERIAL_NUMBER_LENGTH];
 static void whistler_usb_init(void)
 {
-	tegra_usb_phy_init(tegra_usb_phy_pdata, ARRAY_SIZE(tegra_usb_phy_pdata));
-
 	tegra_otg_device.dev.platform_data = &tegra_otg_pdata;
 	platform_device_register(&tegra_otg_device);
 
+	tegra_udc_device.dev.platform_data = &tegra_udc_pdata;
 }
 
 static void __init tegra_whistler_init(void)

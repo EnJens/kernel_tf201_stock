@@ -176,7 +176,6 @@ static int bcmsdh_sdmmc_suspend(struct device *pdev)
 		return -EBUSY;
 	bcmsdh_oob_intr_set(0);
 #endif
-	smp_mb();
 
 	sdio_flags = sdio_get_host_pm_caps(func);
 
@@ -195,6 +194,7 @@ static int bcmsdh_sdmmc_suspend(struct device *pdev)
 	}
 
 	dhd_mmc_suspend = TRUE;
+	smp_mb();
 
 out:
 	return ret;

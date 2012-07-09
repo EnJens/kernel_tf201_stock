@@ -1,7 +1,7 @@
 /*
  * drivers/video/tegra/dc/dsi.c
  *
- * Copyright (c) 2011, NVIDIA Corporation.
+ * Copyright (c) 2011-2012, NVIDIA Corporation.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -24,17 +24,23 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
+#include <linux/debugfs.h>
+#include <linux/seq_file.h>
 
 #include <mach/clk.h>
 #include <mach/dc.h>
 #include <mach/fb.h>
 #include <mach/csi.h>
+#include <mach/iomap.h>
 #include <linux/nvhost.h>
 
 #include "dc_reg.h"
 #include "dc_priv.h"
 #include "dsi_regs.h"
 #include "dsi.h"
+
+#define APB_MISC_GP_MIPI_PAD_CTRL_0 	(TEGRA_APB_MISC_BASE + 0x820)
+#define DSIB_MODE_ENABLE		0x2
 
 #define DSI_USE_SYNC_POINTS		1
 #define S_TO_MS(x)			(1000 * (x))
@@ -107,6 +113,7 @@ struct tegra_dc_dsi_data {
 
 	struct clk *dc_clk;
 	struct clk *dsi_clk;
+	struct clk *dsi_fixed_clk;
 	bool clk_ref;
 
 	struct mutex lock;
@@ -287,17 +294,127 @@ const u32 init_reg[] = {
 
 inline unsigned long tegra_dsi_readl(struct tegra_dc_dsi_data *dsi, u32 reg)
 {
+	unsigned long ret;
+
 	BUG_ON(!nvhost_module_powered(nvhost_get_host(dsi->dc->ndev)->dev));
-	return readl(dsi->base + reg * 4);
+	ret = readl(dsi->base + reg * 4);
+	trace_printk("readl %p=%#08lx\n", dsi->base + reg * 4, ret);
+	return ret;
 }
 EXPORT_SYMBOL(tegra_dsi_readl);
 
 inline void tegra_dsi_writel(struct tegra_dc_dsi_data *dsi, u32 val, u32 reg)
 {
 	BUG_ON(!nvhost_module_powered(nvhost_get_host(dsi->dc->ndev)->dev));
+	trace_printk("writel %p=%#08x\n", dsi->base + reg * 4, val);
 	writel(val, dsi->base + reg * 4);
 }
 EXPORT_SYMBOL(tegra_dsi_writel);
+
+#ifdef CONFIG_DEBUG_FS
+static int dbg_dsi_show(struct seq_file *s, void *unused)
+{
+	struct tegra_dc_dsi_data *dsi = s->private;
+
+#define DUMP_REG(a) do {						\
+		seq_printf(s, "%-32s\t%03x\t%08lx\n",			\
+		       #a, a, tegra_dsi_readl(dsi, a));		\
+	} while (0)
+
+	tegra_dc_io_start(dsi->dc);
+	clk_enable(dsi->dsi_clk);
+
+	DUMP_REG(DSI_INCR_SYNCPT_CNTRL);
+	DUMP_REG(DSI_INCR_SYNCPT_ERROR);
+	DUMP_REG(DSI_CTXSW);
+	DUMP_REG(DSI_POWER_CONTROL);
+	DUMP_REG(DSI_INT_ENABLE);
+	DUMP_REG(DSI_CONTROL);
+	DUMP_REG(DSI_SOL_DELAY);
+	DUMP_REG(DSI_MAX_THRESHOLD);
+	DUMP_REG(DSI_TRIGGER);
+	DUMP_REG(DSI_TX_CRC);
+	DUMP_REG(DSI_STATUS);
+	DUMP_REG(DSI_INIT_SEQ_CONTROL);
+	DUMP_REG(DSI_INIT_SEQ_DATA_0);
+	DUMP_REG(DSI_INIT_SEQ_DATA_1);
+	DUMP_REG(DSI_INIT_SEQ_DATA_2);
+	DUMP_REG(DSI_INIT_SEQ_DATA_3);
+	DUMP_REG(DSI_INIT_SEQ_DATA_4);
+	DUMP_REG(DSI_INIT_SEQ_DATA_5);
+	DUMP_REG(DSI_INIT_SEQ_DATA_6);
+	DUMP_REG(DSI_INIT_SEQ_DATA_7);
+	DUMP_REG(DSI_PKT_SEQ_0_LO);
+	DUMP_REG(DSI_PKT_SEQ_0_HI);
+	DUMP_REG(DSI_PKT_SEQ_1_LO);
+	DUMP_REG(DSI_PKT_SEQ_1_HI);
+	DUMP_REG(DSI_PKT_SEQ_2_LO);
+	DUMP_REG(DSI_PKT_SEQ_2_HI);
+	DUMP_REG(DSI_PKT_SEQ_3_LO);
+	DUMP_REG(DSI_PKT_SEQ_3_HI);
+	DUMP_REG(DSI_PKT_SEQ_4_LO);
+	DUMP_REG(DSI_PKT_SEQ_4_HI);
+	DUMP_REG(DSI_PKT_SEQ_5_LO);
+	DUMP_REG(DSI_PKT_SEQ_5_HI);
+	DUMP_REG(DSI_DCS_CMDS);
+	DUMP_REG(DSI_PKT_LEN_0_1);
+	DUMP_REG(DSI_PKT_LEN_2_3);
+	DUMP_REG(DSI_PKT_LEN_4_5);
+	DUMP_REG(DSI_PKT_LEN_6_7);
+	DUMP_REG(DSI_PHY_TIMING_0);
+	DUMP_REG(DSI_PHY_TIMING_1);
+	DUMP_REG(DSI_PHY_TIMING_2);
+	DUMP_REG(DSI_BTA_TIMING);
+	DUMP_REG(DSI_TIMEOUT_0);
+	DUMP_REG(DSI_TIMEOUT_1);
+	DUMP_REG(DSI_TO_TALLY);
+	DUMP_REG(DSI_PAD_CONTROL);
+	DUMP_REG(DSI_PAD_CONTROL_CD);
+	DUMP_REG(DSI_PAD_CD_STATUS);
+	DUMP_REG(DSI_VID_MODE_CONTROL);
+#undef DUMP_REG
+
+	clk_disable(dsi->dsi_clk);
+	tegra_dc_io_end(dsi->dc);
+
+	return 0;
+}
+
+static int dbg_dsi_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, dbg_dsi_show, inode->i_private);
+}
+
+static const struct file_operations dbg_fops = {
+	.open		= dbg_dsi_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static struct dentry *dsidir;
+
+static void tegra_dc_dsi_debug_create(struct tegra_dc_dsi_data *dsi)
+{
+	struct dentry *retval;
+
+	dsidir = debugfs_create_dir("tegra_dsi", NULL);
+	if (!dsidir)
+		return;
+	retval = debugfs_create_file("regs", S_IRUGO, dsidir, dsi,
+		&dbg_fops);
+	if (!retval)
+		goto free_out;
+	return;
+free_out:
+	debugfs_remove_recursive(dsidir);
+	dsidir = NULL;
+	return;
+}
+#else
+static inline void tegra_dc_dsi_debug_create(struct tegra_dc_dsi_data *dsi)
+{ }
+#endif
 
 static int tegra_dsi_syncpt(struct tegra_dc_dsi_data *dsi)
 {
@@ -1341,6 +1458,7 @@ static void tegra_dsi_set_dsi_clk(struct tegra_dc *dc,
 	if (!dsi->clk_ref) {
 		dsi->clk_ref = true;
 		clk_enable(dsi->dsi_clk);
+		clk_enable(dsi->dsi_fixed_clk);
 		tegra_periph_reset_deassert(dsi->dsi_clk);
 	}
 	dsi->current_dsi_clk_khz = clk_get_rate(dsi->dsi_clk) / 1000;
@@ -1507,6 +1625,15 @@ static void tegra_dsi_pad_calibration(struct tegra_dc_dsi_data *dsi)
 	tegra_vi_csi_writel(val, CSI_CIL_PAD_CONFIG);
 }
 
+static void tegra_dsi_panelB_enable()
+{
+	unsigned int val;
+
+	val = readl(IO_ADDRESS(APB_MISC_GP_MIPI_PAD_CTRL_0));
+	val |= DSIB_MODE_ENABLE;
+	writel(val, (IO_ADDRESS(APB_MISC_GP_MIPI_PAD_CTRL_0)));
+}
+
 static int tegra_dsi_init_hw(struct tegra_dc *dc,
 						struct tegra_dc_dsi_data *dsi)
 {
@@ -1520,7 +1647,7 @@ static int tegra_dsi_init_hw(struct tegra_dc *dc,
 
 	tegra_dsi_set_dsi_clk(dc, dsi, dsi->target_lp_clk_khz);
 	if (dsi->info.dsi_instance) {
-		/* TODO:Set the misc register*/
+		tegra_dsi_panelB_enable();
 	}
 
 	/* TODO: only need to change the timing for bta */
@@ -1817,6 +1944,10 @@ static struct dsi_status *tegra_dsi_prepare_host_transmission(
 
 	if (tegra_dsi_host_busy(dsi)) {
 		tegra_dsi_soft_reset(dsi);
+
+		/* WAR to stop host write in middle */
+		tegra_dsi_writel(dsi, TEGRA_DSI_DISABLE, DSI_TRIGGER);
+
 		if (tegra_dsi_host_busy(dsi)) {
 			err = -EBUSY;
 			dev_err(&dc->ndev->dev, "DSI host busy\n");
@@ -2584,6 +2715,7 @@ static void _tegra_dc_dsi_init(struct tegra_dc *dc)
 {
 	struct tegra_dc_dsi_data *dsi = tegra_dc_get_outdata(dc);
 
+	tegra_dc_dsi_debug_create(dsi);
 	tegra_dsi_init_sw(dc, dsi);
 	/* TODO: Configure the CSI pad configuration */
 }
@@ -2748,6 +2880,7 @@ static int tegra_dc_dsi_init(struct tegra_dc *dc)
 	void __iomem *base;
 	struct clk *dc_clk = NULL;
 	struct clk *dsi_clk = NULL;
+	struct clk *dsi_fixed_clk = NULL;
 	struct tegra_dsi_out *dsi_pdata;
 	int err;
 
@@ -2790,8 +2923,9 @@ static int tegra_dc_dsi_init(struct tegra_dc *dc)
 		dsi_clk = clk_get(&dc->ndev->dev, "dsib");
 	else
 		dsi_clk = clk_get(&dc->ndev->dev, "dsia");
+	dsi_fixed_clk = clk_get(&dc->ndev->dev, "dsi-fixed");
 
-	if (IS_ERR_OR_NULL(dsi_clk)) {
+	if (IS_ERR_OR_NULL(dsi_clk) || IS_ERR_OR_NULL(dsi_fixed_clk)) {
 		dev_err(&dc->ndev->dev, "dsi: can't get clock\n");
 		err = -EBUSY;
 		goto err_release_regs;
@@ -2811,6 +2945,7 @@ static int tegra_dc_dsi_init(struct tegra_dc *dc)
 	dsi->base_res = base_res;
 	dsi->dc_clk = dc_clk;
 	dsi->dsi_clk = dsi_clk;
+	dsi->dsi_fixed_clk = dsi_fixed_clk;
 
 	err = tegra_dc_dsi_cp_info(dsi, dsi_pdata);
 	if (err < 0)
@@ -2824,6 +2959,7 @@ static int tegra_dc_dsi_init(struct tegra_dc *dc)
 err_dsi_data:
 err_clk_put:
 	clk_put(dsi_clk);
+	clk_put(dsi_fixed_clk);
 err_release_regs:
 	release_resource(base_res);
 err_free_dsi:
@@ -2937,6 +3073,7 @@ static int tegra_dsi_deep_sleep(struct tegra_dc *dc,
 
 	/* Disable dsi source clock */
 	clk_disable(dsi->dsi_clk);
+	clk_disable(dsi->dsi_fixed_clk);
 
 	dsi->clk_ref = false;
 	dsi->enabled = false;

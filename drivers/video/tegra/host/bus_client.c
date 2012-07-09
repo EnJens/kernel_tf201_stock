@@ -36,7 +36,7 @@
 #include <linux/nvhost.h>
 #include <linux/nvhost_ioctl.h>
 
-#include <mach/nvmap.h>
+#include <linux/nvmap.h>
 #include <mach/gpufuse.h>
 #include <mach/hardware.h>
 #include <mach/iomap.h>
@@ -44,6 +44,11 @@
 #include "debug.h"
 #include "bus_client.h"
 #include "dev.h"
+#include "nvhost_acm.h"
+
+#include "nvhost_channel.h"
+#include "nvhost_job.h"
+#include "nvhost_hwctx.h"
 
 void nvhost_read_module_regs(struct nvhost_device *ndev,
 			u32 offset, int count, u32 *values)
@@ -84,45 +89,6 @@ struct nvhost_channel_userctx {
 	u32 priority;
 	int clientid;
 };
-
-/*
- * Write cmdbuf to ftrace output. Checks if cmdbuf contents should be output
- * and mmaps the cmdbuf contents if required.
- */
-static void trace_write_cmdbufs(struct nvhost_job *job)
-{
-	struct nvmap_handle_ref handle;
-	void *mem = NULL;
-	int i = 0;
-
-	for (i = 0; i < job->num_gathers; i++) {
-		struct nvhost_channel_gather *gather = &job->gathers[i];
-		if (nvhost_debug_trace_cmdbuf) {
-			handle.handle = nvmap_id_to_handle(gather->mem_id);
-			mem = nvmap_mmap(&handle);
-			if (IS_ERR_OR_NULL(mem))
-				mem = NULL;
-		};
-
-		if (mem) {
-			u32 i;
-			/*
-			 * Write in batches of 128 as there seems to be a limit
-			 * of how much you can output to ftrace at once.
-			 */
-			for (i = 0; i < gather->words; i += TRACE_MAX_LENGTH) {
-				trace_nvhost_channel_write_cmdbuf_data(
-					job->ch->dev->name,
-					gather->mem_id,
-					min(gather->words - i,
-					    TRACE_MAX_LENGTH),
-					gather->offset + i * sizeof(u32),
-					mem);
-			}
-			nvmap_munmap(&handle, mem);
-		}
-	}
-}
 
 static int nvhost_channelrelease(struct inode *inode, struct file *filp)
 {
@@ -174,11 +140,7 @@ static int nvhost_channelopen(struct inode *inode, struct file *filp)
 	priv->priority = NVHOST_PRIORITY_MEDIUM;
 	priv->clientid = atomic_add_return(1,
 			&nvhost_get_host(ch->dev)->clientid);
-
-	priv->job = nvhost_job_alloc(ch, priv->hwctx, &priv->hdr,
-			NULL, priv->priority, priv->clientid);
-	if (!priv->job)
-		goto fail;
+	priv->timeout = MAX_STUCK_CHECK_COUNT * SYNCPT_CHECK_PERIOD;
 
 	return 0;
 fail:
@@ -199,7 +161,7 @@ static int set_submit(struct nvhost_channel_userctx *ctx)
 		return -EFAULT;
 	}
 
-	ctx->job = nvhost_job_realloc(ctx->job,
+	ctx->job = nvhost_job_alloc(ctx->ch,
 			ctx->hwctx,
 			&ctx->hdr,
 			ctx->nvmap,
@@ -221,6 +183,11 @@ static void reset_submit(struct nvhost_channel_userctx *ctx)
 	ctx->hdr.num_relocs = 0;
 	ctx->num_relocshifts = 0;
 	ctx->hdr.num_waitchks = 0;
+
+	if (ctx->job) {
+		nvhost_job_put(ctx->job);
+		ctx->job = NULL;
+	}
 }
 
 static ssize_t nvhost_channelwrite(struct file *filp, const char __user *buf,
@@ -274,13 +241,17 @@ static ssize_t nvhost_channelwrite(struct file *filp, const char __user *buf,
 			consumed = sizeof(struct nvhost_reloc);
 			if (remaining < consumed)
 				break;
-			if (copy_from_user(&job->pinarray[job->num_pins],
+			if (copy_from_user(&job->pinarray[job->num_relocs],
 					buf, consumed)) {
 				err = -EFAULT;
 				break;
 			}
-			trace_nvhost_channel_write_reloc(chname);
-			job->num_pins++;
+			trace_nvhost_channel_write_reloc(chname,
+				job->pinarray[job->num_relocs].patch_mem,
+				job->pinarray[job->num_relocs].patch_offset,
+				job->pinarray[job->num_relocs].pin_mem,
+				job->pinarray[job->num_relocs].pin_offset);
+			job->num_relocs++;
 			hdr->num_relocs--;
 		} else if (hdr->num_waitchks) {
 			int numwaitchks =
@@ -302,7 +273,7 @@ static ssize_t nvhost_channelwrite(struct file *filp, const char __user *buf,
 			hdr->num_waitchks -= numwaitchks;
 		} else if (priv->num_relocshifts) {
 			int next_shift =
-				job->num_pins - priv->num_relocshifts;
+				job->num_relocs - priv->num_relocshifts;
 			consumed = sizeof(struct nvhost_reloc_shift);
 			if (remaining < consumed)
 				break;
@@ -364,23 +335,23 @@ static int nvhost_ioctl_channel_flush(
 		ctx->timeout = nvhost_debug_force_timeout_val;
 	}
 
-	trace_write_cmdbufs(ctx->job);
-
 	/* context switch if needed, and submit user's gathers to the channel */
 	err = nvhost_channel_submit(ctx->job);
 	args->value = ctx->job->syncpt_end;
 	if (err)
 		nvhost_job_unpin(ctx->job);
 
+	nvhost_job_put(ctx->job);
+	ctx->job = NULL;
+
 	return err;
 }
 
-static int nvhost_ioctl_channel_read_3d_reg(
-	struct nvhost_channel_userctx *ctx,
+static int nvhost_ioctl_channel_read_3d_reg(struct nvhost_channel_userctx *ctx,
 	struct nvhost_read_3d_reg_args *args)
 {
-	BUG_ON(!channel_op(ctx->ch).read3dreg);
-	return channel_op(ctx->ch).read3dreg(ctx->ch, ctx->hwctx,
+	BUG_ON(!channel_op().read3dreg);
+	return channel_op().read3dreg(ctx->ch, ctx->hwctx,
 			args->offset, &args->value);
 }
 
@@ -535,18 +506,23 @@ int nvhost_client_user_init(struct nvhost_device *dev)
 	int err, devno;
 
 	struct nvhost_channel *ch = dev->channel;
+	err = alloc_chrdev_region(&devno, 0, 1, IFACE_NAME);
+	if (err < 0) {
+		dev_err(&dev->dev, "failed to allocate devno\n");
+		goto fail;
+	}
 
 	cdev_init(&ch->cdev, &nvhost_channelops);
 	ch->cdev.owner = THIS_MODULE;
 
-	devno = MKDEV(nvhost_major, nvhost_minor + dev->index);
 	err = cdev_add(&ch->cdev, devno, 1);
 	if (err < 0) {
 		dev_err(&dev->dev,
 			"failed to add chan %i cdev\n", dev->index);
 		goto fail;
 	}
-	ch->node = device_create(nvhost_get_host(dev)->nvhost_class, NULL, devno, NULL,
+	ch->node = device_create(nvhost_get_host(dev)->nvhost_class,
+			NULL, devno, NULL,
 			IFACE_NAME "-%s", dev->name);
 	if (IS_ERR(ch->node)) {
 		err = PTR_ERR(ch->node);
@@ -564,7 +540,11 @@ int nvhost_client_device_init(struct nvhost_device *dev)
 {
 	int err;
 	struct nvhost_master *nvhost_master = nvhost_get_host(dev);
-	struct nvhost_channel *ch = &nvhost_master->channels[dev->index];
+	struct nvhost_channel *ch;
+
+	ch = nvhost_alloc_channel(dev->index);
+	if (ch == NULL)
+		return -ENODEV;
 
 	/* store the pointer to this device for channel */
 	ch->dev = dev;
@@ -587,14 +567,13 @@ int nvhost_client_device_init(struct nvhost_device *dev)
 
 fail:
 	/* Add clean-up */
+	nvhost_free_channel(ch);
 	return err;
 }
 
 int nvhost_client_device_suspend(struct nvhost_device *dev)
 {
 	int ret = 0;
-
-	dev_info(&dev->dev, "suspending\n");
 
 	ret = nvhost_channel_suspend(dev->channel);
 	if (ret)
@@ -603,4 +582,38 @@ int nvhost_client_device_suspend(struct nvhost_device *dev)
 	dev_info(&dev->dev, "suspend status: %d\n", ret);
 
 	return ret;
+}
+
+int nvhost_client_device_get_resources(struct nvhost_device *dev)
+{
+	struct resource *r = NULL;
+	void __iomem *regs = NULL;
+	struct resource *reg_mem = NULL;
+
+	r = nvhost_get_resource(dev, IORESOURCE_MEM, 0);
+	if (!r)
+		goto fail;
+
+	reg_mem = request_mem_region(r->start, resource_size(r), dev->name);
+	if (!reg_mem)
+		goto fail;
+
+	regs = ioremap(r->start, resource_size(r));
+	if (!regs)
+		goto fail;
+
+	dev->reg_mem = reg_mem;
+	dev->aperture = regs;
+
+	return 0;
+
+fail:
+	if (reg_mem)
+		release_mem_region(r->start, resource_size(r));
+	if (regs)
+		iounmap(regs);
+
+	dev_err(&dev->dev, "failed to get register memory\n");
+
+	return -ENXIO;
 }

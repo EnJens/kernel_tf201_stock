@@ -4,7 +4,7 @@
  * Copyright (C) 2010 Google, Inc.
  * Author: Colin Cross <ccross@android.com>
  *
- * Copyright (C) 2010-2011 NVIDIA Corporation
+ * Copyright (C) 2010-2012 NVIDIA Corporation
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -106,13 +106,26 @@
 #define I2C_HEADER_10BIT_ADDR			(1<<18)
 #define I2C_HEADER_IE_ENABLE			(1<<17)
 #define I2C_HEADER_REPEAT_START			(1<<16)
+#define I2C_HEADER_CONTINUE_XFER		(1<<15)
 #define I2C_HEADER_MASTER_ADDR_SHIFT		12
 #define I2C_HEADER_SLAVE_ADDR_SHIFT		1
 
 #define SL_ADDR1(addr) (addr & 0xff)
 #define SL_ADDR2(addr) ((addr >> 8) & 0xff)
 
+/*
+ * msg_end_type: The bus control which need to be send at end of transfer.
+ * @MSG_END_STOP: Send stop pulse at end of transfer.
+ * @MSG_END_REPEAT_START: Send repeat start at end of transfer.
+ * @MSG_END_CONTINUE: The following on message is coming and so do not send
+ *		stop or repeat start.
+ */
 
+enum msg_end_type {
+	MSG_END_STOP,
+	MSG_END_REPEAT_START,
+	MSG_END_CONTINUE,
+};
 
 struct tegra_i2c_dev;
 
@@ -151,6 +164,7 @@ struct tegra_i2c_dev {
 	struct clk *fast_clk;
 	struct resource *iomem;
 	struct rt_mutex dev_lock;
+	spinlock_t fifo_lock;
 	void __iomem *base;
 	int cont_id;
 	int irq;
@@ -189,6 +203,20 @@ static void dvc_writel(struct tegra_i2c_dev *i2c_dev, u32 val, unsigned long reg
 static u32 dvc_readl(struct tegra_i2c_dev *i2c_dev, unsigned long reg)
 {
 	return readl(i2c_dev->base + reg);
+}
+
+static void dvc_i2c_mask_irq(struct tegra_i2c_dev *i2c_dev, u32 mask)
+{
+	u32 int_mask = dvc_readl(i2c_dev, DVC_CTRL_REG3);
+	int_mask &= ~mask;
+	dvc_writel(i2c_dev, int_mask, DVC_CTRL_REG3);
+}
+
+static void dvc_i2c_unmask_irq(struct tegra_i2c_dev *i2c_dev, u32 mask)
+{
+	u32 int_mask = dvc_readl(i2c_dev, DVC_CTRL_REG3);
+	int_mask |= mask;
+	dvc_writel(i2c_dev, int_mask, DVC_CTRL_REG3);
 }
 
 /*
@@ -306,6 +334,9 @@ static int tegra_i2c_fill_tx_fifo(struct tegra_i2c_dev *i2c_dev)
 	u8 *buf = i2c_dev->msg_buf;
 	size_t buf_remaining = i2c_dev->msg_buf_remaining;
 	int words_to_transfer;
+	unsigned long flags;
+
+	spin_lock_irqsave(&i2c_dev->fifo_lock, flags);
 
 	val = i2c_readl(i2c_dev, I2C_FIFO_STATUS);
 	tx_fifo_avail = (val & I2C_FIFO_STATUS_TX_MASK) >>
@@ -355,6 +386,8 @@ static int tegra_i2c_fill_tx_fifo(struct tegra_i2c_dev *i2c_dev)
 		i2c_writel(i2c_dev, val, I2C_TX_FIFO);
 	}
 
+	spin_unlock_irqrestore(&i2c_dev->fifo_lock, flags);
+
 	return 0;
 }
 
@@ -370,7 +403,6 @@ static void tegra_dvc_init(struct tegra_i2c_dev *i2c_dev)
 	u32 val = 0;
 	val = dvc_readl(i2c_dev, DVC_CTRL_REG3);
 	val |= DVC_CTRL_REG3_SW_PROG;
-	val |= DVC_CTRL_REG3_I2C_DONE_INTR_EN;
 	dvc_writel(i2c_dev, val, DVC_CTRL_REG3);
 
 	val = dvc_readl(i2c_dev, DVC_CTRL_REG1);
@@ -426,7 +458,7 @@ static int tegra_i2c_init(struct tegra_i2c_dev *i2c_dev)
 
 	/* Interrupt generated before sending stop signal so
 	* wait for some time so that stop signal can be send proerly */
-	udelay(100);
+	mdelay(1);
 
 	tegra_periph_reset_assert(i2c_dev->div_clk);
 	udelay(2);
@@ -551,9 +583,12 @@ static irqreturn_t tegra_i2c_isr(int irq, void *dev_id)
 	}
 
 	i2c_writel(i2c_dev, status, I2C_INT_STATUS);
+	i2c_readl(i2c_dev, I2C_INT_STATUS);
 
-	if (i2c_dev->is_dvc)
+	if (i2c_dev->is_dvc) {
 		dvc_writel(i2c_dev, DVC_STATUS_I2C_DONE_INTR, DVC_STATUS);
+		dvc_readl(i2c_dev, DVC_STATUS);
+	}
 
 	if (status & I2C_INT_PACKET_XFER_COMPLETE) {
 		BUG_ON(i2c_dev->msg_buf_remaining);
@@ -589,16 +624,23 @@ err:
 		I2C_INT_RX_FIFO_DATA_REQ | I2C_INT_TX_FIFO_OVERFLOW);
 
 	i2c_writel(i2c_dev, status, I2C_INT_STATUS);
+	i2c_readl(i2c_dev, I2C_INT_STATUS);
 
+	/* An error occured, mask dvc interrupt */
 	if (i2c_dev->is_dvc)
+		dvc_i2c_mask_irq(i2c_dev, DVC_CTRL_REG3_I2C_DONE_INTR_EN);
+
+	if (i2c_dev->is_dvc) {
 		dvc_writel(i2c_dev, DVC_STATUS_I2C_DONE_INTR, DVC_STATUS);
+		dvc_readl(i2c_dev, DVC_STATUS);
+	}
 
 	complete(&i2c_dev->msg_complete);
 	return IRQ_HANDLED;
 }
 
 static int tegra_i2c_xfer_msg(struct tegra_i2c_bus *i2c_bus,
-	struct i2c_msg *msg, int stop)
+	struct i2c_msg *msg, enum msg_end_type end_state)
 {
 	struct tegra_i2c_dev *i2c_dev = i2c_bus->dev;
 	u32 int_mask;
@@ -609,6 +651,10 @@ static int tegra_i2c_xfer_msg(struct tegra_i2c_bus *i2c_bus,
 		return -EINVAL;
 
 	tegra_i2c_flush_fifos(i2c_dev);
+
+	/* Toggle the direction flag if rev dir is selected */
+	if (msg->flags & I2C_M_REV_DIR_ADDR)
+		msg->flags ^= I2C_M_RD;
 
 	i2c_dev->msg_buf = msg->buf;
 	i2c_dev->msg_buf_remaining = msg->len;
@@ -627,8 +673,11 @@ static int tegra_i2c_xfer_msg(struct tegra_i2c_bus *i2c_bus,
 	i2c_writel(i2c_dev, i2c_dev->payload_size, I2C_TX_FIFO);
 
 	i2c_dev->io_header = I2C_HEADER_IE_ENABLE;
-	if (!stop)
+	if (end_state == MSG_END_CONTINUE)
+		i2c_dev->io_header |= I2C_HEADER_CONTINUE_XFER;
+	else if (end_state == MSG_END_REPEAT_START)
 		i2c_dev->io_header |= I2C_HEADER_REPEAT_START;
+
 	if (msg->flags & I2C_M_TEN) {
 		i2c_dev->io_header |= msg->addr;
 		i2c_dev->io_header |= I2C_HEADER_10BIT_ADDR;
@@ -648,6 +697,9 @@ static int tegra_i2c_xfer_msg(struct tegra_i2c_bus *i2c_bus,
 	if (!(msg->flags & I2C_M_RD))
 		tegra_i2c_fill_tx_fifo(i2c_dev);
 
+	if (i2c_dev->is_dvc)
+		dvc_i2c_unmask_irq(i2c_dev, DVC_CTRL_REG3_I2C_DONE_INTR_EN);
+
 	int_mask = I2C_INT_NO_ACK | I2C_INT_ARBITRATION_LOST | I2C_INT_TX_FIFO_OVERFLOW;
 	if (msg->flags & I2C_M_RD)
 		int_mask |= I2C_INT_RX_FIFO_DATA_REQ;
@@ -660,6 +712,13 @@ static int tegra_i2c_xfer_msg(struct tegra_i2c_bus *i2c_bus,
 	ret = wait_for_completion_timeout(&i2c_dev->msg_complete,
 					TEGRA_I2C_TIMEOUT);
 	tegra_i2c_mask_irq(i2c_dev, int_mask);
+
+	if (i2c_dev->is_dvc)
+		dvc_i2c_mask_irq(i2c_dev, DVC_CTRL_REG3_I2C_DONE_INTR_EN);
+
+	/* Restore the message flag */
+	if (msg->flags & I2C_M_REV_DIR_ADDR)
+		msg->flags ^= I2C_M_RD;
 
 	if (WARN_ON(ret == 0)) {
 		dev_err(i2c_dev->dev,
@@ -735,8 +794,14 @@ static int tegra_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[],
 		tegra_i2c_clock_enable(i2c_dev);
 
 	for (i = 0; i < num; i++) {
-		int stop = (i == (num - 1)) ? 1  : 0;
-		ret = tegra_i2c_xfer_msg(i2c_bus, &msgs[i], stop);
+		enum msg_end_type end_type = MSG_END_STOP;
+		if (i < (num - 1)) {
+			if (msgs[i + 1].flags & I2C_M_NOSTART)
+				end_type = MSG_END_CONTINUE;
+			else
+				end_type = MSG_END_REPEAT_START;
+		}
+		ret = tegra_i2c_xfer_msg(i2c_bus, &msgs[i], end_type);
 		if (ret)
 			break;
 	}
@@ -754,7 +819,8 @@ static int tegra_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[],
 
 static u32 tegra_i2c_func(struct i2c_adapter *adap)
 {
-	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL | I2C_FUNC_10BIT_ADDR;
+	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL | I2C_FUNC_10BIT_ADDR |
+			I2C_FUNC_PROTOCOL_MANGLING;
 }
 
 static const struct i2c_algorithm tegra_i2c_algo = {
@@ -862,6 +928,7 @@ static int tegra_i2c_probe(struct platform_device *pdev)
 	i2c_dev->msgs = NULL;
 	i2c_dev->msgs_num = 0;
 	rt_mutex_init(&i2c_dev->dev_lock);
+	spin_lock_init(&i2c_dev->fifo_lock);
 
 	i2c_dev->slave_addr = plat->slave_addr;
 	i2c_dev->hs_master_code = plat->hs_master_code;

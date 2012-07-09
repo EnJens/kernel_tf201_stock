@@ -111,20 +111,6 @@ static struct usb_descriptor_header *hs_adb_descs[] = {
 	NULL,
 };
 
-static struct usb_string adb_string_defs[] = {
-	[0].s = "ASUS Android Composite ADB Interface",
-	{  },	 /*end of list*/
-};
-
-static struct usb_gadget_strings adb_string_table = {
-	.language = 0x0409, /*en-US*/
-	.strings = adb_string_defs,
-};
-
-static struct usb_gadget_strings *adb_strings[] = {
-	&adb_string_table,
-	NULL,
-};
 
 /* temporary variable used between adb_open() and adb_gadget_bind() */
 static struct adb_dev *_adb_dev;
@@ -554,16 +540,12 @@ static int adb_function_set_alt(struct usb_function *f,
 	int ret;
 
 	DBG(cdev, "adb_function_set_alt intf: %d alt: %d\n", intf, alt);
-	ret = usb_ep_enable(dev->ep_in,
-			ep_choose(cdev->gadget,
-				&adb_highspeed_in_desc,
-				&adb_fullspeed_in_desc));
+	config_ep_by_speed(cdev->gadget, f, dev->ep_in);
+	ret = usb_ep_enable(dev->ep_in);
 	if (ret)
 		return ret;
-	ret = usb_ep_enable(dev->ep_out,
-			ep_choose(cdev->gadget,
-				&adb_highspeed_out_desc,
-				&adb_fullspeed_out_desc));
+	config_ep_by_speed(cdev->gadget, f, dev->ep_out);
+	ret = usb_ep_enable(dev->ep_out);
 	if (ret) {
 		usb_ep_disable(dev->ep_in);
 		return ret;
@@ -595,22 +577,11 @@ static void adb_function_disable(struct usb_function *f)
 static int adb_bind_config(struct usb_configuration *c)
 {
 	struct adb_dev *dev = _adb_dev;
-	int ret;
 
 	printk(KERN_INFO "adb_bind_config\n");
 
-	/* allocate a string ID for our interface */
-	if (adb_string_defs[0].id == 0) {
-		ret = usb_string_id(c->cdev);
-		if (ret < 0)
-			return ret;
-		adb_string_defs[0].id = ret;
-		adb_interface_desc.iInterface = ret;
-	}
-
 	dev->cdev = c->cdev;
 	dev->function.name = "adb";
-	dev->function.strings = adb_strings,
 	dev->function.descriptors = fs_adb_descs;
 	dev->function.hs_descriptors = hs_adb_descs;
 	dev->function.bind = adb_function_bind;

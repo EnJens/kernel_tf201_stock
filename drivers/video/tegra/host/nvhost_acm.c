@@ -55,15 +55,8 @@ static void do_unpowergate_locked(int id)
 		tegra_unpowergate_partition(id);
 }
 
-void nvhost_module_reset(struct nvhost_device *dev)
+static void do_module_reset_locked(struct nvhost_device *dev)
 {
-	dev_dbg(&dev->dev,
-		"%s: asserting %s module reset (id %d, id2 %d)\n",
-		__func__, dev->name,
-		dev->powergate_ids[0], dev->powergate_ids[1]);
-
-	mutex_lock(&dev->lock);
-
 	/* assert module and mc client reset */
 	if (dev->powergate_ids[0] != -1) {
 		tegra_powergate_mc_disable(dev->powergate_ids[0]);
@@ -89,7 +82,17 @@ void nvhost_module_reset(struct nvhost_device *dev)
 		tegra_periph_reset_deassert(dev->clk[1]);
 		tegra_powergate_mc_enable(dev->powergate_ids[1]);
 	}
+}
 
+void nvhost_module_reset(struct nvhost_device *dev)
+{
+	dev_dbg(&dev->dev,
+		"%s: asserting %s module reset (id %d, id2 %d)\n",
+		__func__, dev->name,
+		dev->powergate_ids[0], dev->powergate_ids[1]);
+
+	mutex_lock(&dev->lock);
+	do_module_reset_locked(dev);
 	mutex_unlock(&dev->lock);
 
 	dev_dbg(&dev->dev, "%s: module %s out of reset\n",
@@ -108,15 +111,21 @@ static void to_state_clockgated_locked(struct nvhost_device *dev)
 			&& dev->can_powergate) {
 		do_unpowergate_locked(dev->powergate_ids[0]);
 		do_unpowergate_locked(dev->powergate_ids[1]);
+
+		if (dev->powerup_reset)
+			do_module_reset_locked(dev);
 	}
 	dev->powerstate = NVHOST_POWER_STATE_CLOCKGATED;
 }
 
 static void to_state_running_locked(struct nvhost_device *dev)
 {
+	struct nvhost_driver *drv = to_nvhost_driver(dev->dev.driver);
 	int prev_state = dev->powerstate;
+
 	if (dev->powerstate == NVHOST_POWER_STATE_POWERGATED)
 		to_state_clockgated_locked(dev);
+
 	if (dev->powerstate == NVHOST_POWER_STATE_CLOCKGATED) {
 		int i;
 
@@ -129,8 +138,8 @@ static void to_state_running_locked(struct nvhost_device *dev)
 		}
 
 		if (prev_state == NVHOST_POWER_STATE_POWERGATED
-				&& dev->finalize_poweron)
-			dev->finalize_poweron(dev);
+				&& drv->finalize_poweron)
+			drv->finalize_poweron(dev);
 	}
 	dev->powerstate = NVHOST_POWER_STATE_RUNNING;
 }
@@ -142,12 +151,13 @@ static void to_state_running_locked(struct nvhost_device *dev)
 static int to_state_powergated_locked(struct nvhost_device *dev)
 {
 	int err = 0;
+	struct nvhost_driver *drv = to_nvhost_driver(dev->dev.driver);
 
-	if (dev->prepare_poweroff
+	if (drv->prepare_poweroff
 			&& dev->powerstate != NVHOST_POWER_STATE_POWERGATED) {
 		/* Clock needs to be on in prepare_poweroff */
 		to_state_running_locked(dev);
-		err = dev->prepare_poweroff(dev);
+		err = drv->prepare_poweroff(dev);
 		if (err)
 			return err;
 	}
@@ -179,8 +189,10 @@ static void schedule_clockgating_locked(struct nvhost_device *dev)
 
 void nvhost_module_busy(struct nvhost_device *dev)
 {
-	if (dev->busy)
-		dev->busy(dev);
+	struct nvhost_driver *drv = to_nvhost_driver(dev->dev.driver);
+
+	if (drv->busy)
+		drv->busy(dev);
 
 	mutex_lock(&dev->lock);
 	cancel_delayed_work(&dev->powerstate_down);
@@ -220,6 +232,7 @@ static void powerstate_down_handler(struct work_struct *work)
 
 void nvhost_module_idle_mult(struct nvhost_device *dev, int refs)
 {
+	struct nvhost_driver *drv = to_nvhost_driver(dev->dev.driver);
 	bool kick = false;
 
 	mutex_lock(&dev->lock);
@@ -234,8 +247,8 @@ void nvhost_module_idle_mult(struct nvhost_device *dev, int refs)
 	if (kick) {
 		wake_up(&dev->idle_wq);
 
-		if (dev->idle)
-			dev->idle(dev);
+		if (drv->idle)
+			drv->idle(dev);
 	}
 }
 
@@ -394,41 +407,10 @@ static int is_module_idle(struct nvhost_device *dev)
 	return (count == 0);
 }
 
-static void debug_not_idle(struct nvhost_master *host)
-{
-	int i;
-	bool lock_released = true;
-
-	for (i = 0; i < host->nb_channels; i++) {
-		struct nvhost_device *dev = host->channels[i].dev;
-		mutex_lock(&dev->lock);
-		if (dev->name)
-			dev_warn(&host->dev->dev,
-				"tegra_grhost: %s: refcnt %d\n", dev->name,
-				dev->refcount);
-		mutex_unlock(&dev->lock);
-	}
-
-	for (i = 0; i < host->syncpt.nb_mlocks; i++) {
-		int c = atomic_read(&host->syncpt.lock_counts[i]);
-		if (c) {
-			dev_warn(&host->dev->dev,
-				"tegra_grhost: lock id %d: refcnt %d\n",
-				i, c);
-			lock_released = false;
-		}
-	}
-	if (lock_released)
-		dev_dbg(&host->dev->dev, "tegra_grhost: all locks released\n");
-}
-
-int nvhost_module_suspend(struct nvhost_device *dev, bool system_suspend)
+int nvhost_module_suspend(struct nvhost_device *dev)
 {
 	int ret;
-	struct nvhost_master *host = nvhost_get_host(dev);
-
-	if (system_suspend && !is_module_idle(dev))
-		debug_not_idle(host);
+	struct nvhost_driver *drv = to_nvhost_driver(dev->dev.driver);
 
 	ret = wait_event_timeout(dev->idle_wq, is_module_idle(dev),
 			ACM_SUSPEND_WAIT_FOR_IDLE_TIMEOUT);
@@ -438,16 +420,13 @@ int nvhost_module_suspend(struct nvhost_device *dev, bool system_suspend)
 		return -EBUSY;
 	}
 
-	if (system_suspend)
-		dev_dbg(&dev->dev, "tegra_grhost: entered idle\n");
-
 	mutex_lock(&dev->lock);
 	cancel_delayed_work(&dev->powerstate_down);
 	to_state_powergated_locked(dev);
 	mutex_unlock(&dev->lock);
 
-	if (dev->suspend)
-		dev->suspend(dev);
+	if (drv->suspend_ndev)
+		drv->suspend_ndev(dev);
 
 	return 0;
 }
@@ -455,11 +434,12 @@ int nvhost_module_suspend(struct nvhost_device *dev, bool system_suspend)
 void nvhost_module_deinit(struct nvhost_device *dev)
 {
 	int i;
+	struct nvhost_driver *drv = to_nvhost_driver(dev->dev.driver);
 
-	if (dev->deinit)
-		dev->deinit(dev);
+	if (drv->deinit)
+		drv->deinit(dev);
 
-	nvhost_module_suspend(dev, false);
+	nvhost_module_suspend(dev);
 	for (i = 0; i < dev->num_clks; i++)
 		clk_put(dev->clk[i]);
 	dev->powerstate = NVHOST_POWER_STATE_DEINIT;

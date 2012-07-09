@@ -262,13 +262,15 @@ int tegra_system_edp_alarm(bool alarm)
 	system_edp_alarm = alarm;
 
 	/* Update cpu rate if cpufreq (at least on cpu0) is already started
-	   and cancel emergency throttling after edp limit is applied */
+	   and cancel emergency throttling after either edp limit is applied
+	   or alarm is canceled */
 	if (target_cpu_speed[0]) {
 		edp_update_limit();
 		ret = tegra_cpu_set_speed_cap(NULL);
-		if (!ret && alarm)
-			tegra_edp_throttle_cpu_now(0);
 	}
+	if (!ret || !alarm)
+		tegra_edp_throttle_cpu_now(0);
+
 	mutex_unlock(&tegra_cpu_lock);
 
 	return ret;
@@ -467,7 +469,7 @@ unsigned int tegra_getspeed(unsigned int cpu)
 	return rate;
 }
 
-static int tegra_update_cpu_speed(unsigned long rate)
+int tegra_update_cpu_speed(unsigned long rate)
 {
 	int ret = 0;
 	struct cpufreq_freqs freqs;

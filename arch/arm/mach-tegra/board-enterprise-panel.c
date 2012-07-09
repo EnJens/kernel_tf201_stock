@@ -28,7 +28,7 @@
 #include <linux/tegra_pwm_bl.h>
 #include <asm/atomic.h>
 #include <linux/nvhost.h>
-#include <mach/nvmap.h>
+#include <linux/nvmap.h>
 #include <mach/irqs.h>
 #include <mach/iomap.h>
 #include <mach/dc.h>
@@ -63,6 +63,7 @@
 
 #ifdef CONFIG_TEGRA_DC
 static struct regulator *enterprise_dsi_reg;
+static bool dsi_regulator_status;
 static struct regulator *enterprise_lcd_reg;
 
 static struct regulator *enterprise_hdmi_reg;
@@ -107,40 +108,39 @@ static tegra_dc_bl_output enterprise_bl_output_measured_a02 = {
 	183, 184, 185, 186, 186, 187, 188, 188
 };
 
-/* TODO: Measure BL response for this table */
 static tegra_dc_bl_output enterprise_bl_output_measured_a03 = {
 	0, 1, 2, 3, 4, 5, 6, 7,
-	8, 9, 10, 11, 12, 13, 14, 15,
-	16, 17, 18, 19, 20, 21, 22, 23,
-	24, 25, 26, 27, 28, 29, 30, 31,
-	32, 33, 34, 35, 36, 37, 38, 39,
-	40, 41, 42, 43, 44, 45, 46, 47,
-	48, 49, 50, 51, 52, 53, 54, 55,
-	56, 57, 58, 59, 60, 61, 62, 63,
-	64, 65, 66, 67, 68, 69, 70, 71,
+	8, 9, 10, 12, 13, 14, 15, 16,
+	17, 19, 20, 21, 22, 22, 23, 24,
+	25, 26, 27, 28, 29, 29, 30, 32,
+	33, 34, 35, 36, 38, 39, 40, 42,
+	43, 44, 46, 47, 49, 50, 51, 52,
+	53, 54, 55, 56, 57, 58, 59, 60,
+	61, 63, 64, 66, 67, 69, 70, 71,
 	72, 73, 74, 75, 76, 77, 78, 79,
-	80, 81, 82, 83, 84, 85, 86, 87,
-	88, 89, 90, 91, 92, 93, 94, 95,
-	96, 97, 98, 99, 100, 101, 102, 103,
-	104, 105, 106, 107, 108, 109, 110, 111,
-	112, 113, 114, 115, 116, 117, 118, 119,
-	120, 121, 122, 123, 124, 125, 126, 127,
-	128, 129, 130, 131, 132, 133, 134, 135,
-	136, 137, 138, 139, 140, 141, 142, 143,
-	144, 145, 146, 147, 148, 149, 150, 151,
-	152, 153, 154, 155, 156, 157, 158, 159,
-	160, 161, 162, 163, 164, 165, 166, 167,
-	168, 169, 170, 171, 172, 173, 174, 175,
-	176, 177, 178, 179, 180, 181, 182, 183,
-	184, 185, 186, 187, 188, 189, 190, 191,
-	192, 193, 194, 195, 196, 197, 198, 199,
-	200, 201, 202, 203, 204, 205, 206, 207,
-	208, 209, 210, 211, 212, 213, 214, 215,
-	216, 217, 218, 219, 220, 221, 222, 223,
-	224, 225, 226, 227, 228, 229, 230, 231,
-	232, 233, 234, 235, 236, 237, 238, 239,
-	240, 241, 242, 243, 244, 245, 246, 247,
-	248, 249, 250, 251, 252, 253, 254, 255,
+	80, 81, 82, 83, 84, 84, 85, 86,
+	87, 88, 89, 90, 91, 92, 93, 94,
+	95, 96, 97, 98, 99, 100, 101, 102,
+	103, 104, 105, 106, 107, 108, 109, 110,
+	110, 111, 112, 113, 113, 114, 115, 116,
+	116, 117, 118, 118, 119, 120, 121, 122,
+	123, 124, 125, 126, 127, 128, 129, 130,
+	130, 131, 132, 133, 134, 135, 136, 137,
+	138, 139, 140, 141, 142, 143, 144, 145,
+	146, 147, 148, 149, 150, 151, 152, 153,
+	154, 155, 156, 157, 158, 159, 160, 160,
+	161, 162, 163, 163, 164, 165, 165, 166,
+	167, 168, 168, 169, 170, 171, 172, 173,
+	174, 175, 176, 176, 177, 178, 179, 180,
+	181, 182, 183, 184, 185, 186, 187, 188,
+	189, 190, 191, 191, 192, 193, 194, 194,
+	195, 196, 197, 197, 198, 199, 199, 200,
+	202, 203, 205, 206, 208, 209, 211, 212,
+	213, 215, 216, 218, 219, 220, 221, 222,
+	223, 224, 225, 226, 227, 228, 229, 230,
+	231, 232, 233, 234, 235, 236, 237, 238,
+	239, 240, 241, 243, 244, 245, 247, 248,
+	250, 251, 251, 252, 253, 254, 254, 255,
 };
 
 static p_tegra_dc_bl_output bl_output;
@@ -150,7 +150,6 @@ static bool kernel_1st_panel_init = true;
 static int enterprise_backlight_notify(struct device *unused, int brightness)
 {
 	int cur_sd_brightness = atomic_read(&sd_brightness);
-	int orig_brightness = brightness;
 
 	/* SD brightness is a percentage, 8-bit value. */
 	brightness = (brightness * cur_sd_brightness) / 255;
@@ -455,6 +454,51 @@ static struct tegra_dc_platform_data enterprise_disp2_pdata = {
 	.emc_clk_rate	= 300000000,
 };
 
+static int avdd_dsi_csi_rail_enable(void)
+{
+	int ret;
+
+	if (dsi_regulator_status == true)
+		return 0;
+
+	if (enterprise_dsi_reg == NULL) {
+		enterprise_dsi_reg = regulator_get(NULL, "avdd_dsi_csi");
+		if (IS_ERR_OR_NULL(enterprise_dsi_reg)) {
+			pr_err("dsi: Could not get regulator avdd_dsi_csi\n");
+			enterprise_dsi_reg = NULL;
+			return PTR_ERR(enterprise_dsi_reg);
+		}
+	}
+	ret = regulator_enable(enterprise_dsi_reg);
+	if (ret < 0) {
+		pr_err("DSI regulator avdd_dsi_csi could not be enabled\n");
+		return ret;
+	}
+	dsi_regulator_status = true;
+	return 0;
+}
+
+static int avdd_dsi_csi_rail_disable(void)
+{
+	int ret;
+
+	if (dsi_regulator_status == false)
+		return 0;
+
+	if (enterprise_dsi_reg == NULL) {
+		pr_warn("%s: unbalanced disable\n", __func__);
+		return -EIO;
+	}
+
+	ret = regulator_disable(enterprise_dsi_reg);
+	if (ret < 0) {
+		pr_err("DSI regulator avdd_dsi_csi cannot be disabled\n");
+		return ret;
+	}
+	dsi_regulator_status = false;
+	return 0;
+}
+
 static int enterprise_dsi_panel_enable(void)
 {
 	int ret;
@@ -462,20 +506,9 @@ static int enterprise_dsi_panel_enable(void)
 
 	tegra_get_board_info(&board_info);
 
-	if (enterprise_dsi_reg == NULL) {
-		enterprise_dsi_reg = regulator_get(NULL, "avdd_dsi_csi");
-		if (IS_ERR_OR_NULL(enterprise_dsi_reg)) {
-			pr_err("dsi: Could not get regulator avdd_dsi_csi\n");
-				enterprise_dsi_reg = NULL;
-				return PTR_ERR(enterprise_dsi_reg);
-		}
-	}
-	ret = regulator_enable(enterprise_dsi_reg);
-	if (ret < 0) {
-		printk(KERN_ERR
-			"DSI regulator avdd_dsi_csi could not be enabled\n");
+	ret = avdd_dsi_csi_rail_enable();
+	if (ret)
 		return ret;
-	}
 
 #if DSI_PANEL_RESET
 
@@ -563,8 +596,8 @@ static void enterprise_stereo_set_orientation(int mode)
 #ifdef CONFIG_TEGRA_DC
 static int enterprise_dsi_panel_postsuspend(void)
 {
-	/* Do nothing for enterprise dsi panel */
-	return 0;
+	/* Disable enterprise dsi rail */
+	return avdd_dsi_csi_rail_disable();
 }
 #endif
 
@@ -783,17 +816,12 @@ static void enterprise_panel_early_suspend(struct early_suspend *h)
 		fb_blank(registered_fb[0], FB_BLANK_POWERDOWN);
 	if (num_registered_fb > 1)
 		fb_blank(registered_fb[1], FB_BLANK_NORMAL);
+
 #ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
-	cpufreq_save_default_governor();
-	cpufreq_set_conservative_governor();
-	cpufreq_set_conservative_governor_param("up_threshold",
-			SET_CONSERVATIVE_GOVERNOR_UP_THRESHOLD);
-
-	cpufreq_set_conservative_governor_param("down_threshold",
-			SET_CONSERVATIVE_GOVERNOR_DOWN_THRESHOLD);
-
-	cpufreq_set_conservative_governor_param("freq_step",
-			SET_CONSERVATIVE_GOVERNOR_FREQ_STEP);
+	cpufreq_store_default_gov();
+	if (cpufreq_change_gov(cpufreq_conservative_gov))
+		pr_err("Early_suspend: Error changing governor to %s\n",
+				cpufreq_conservative_gov);
 #endif
 }
 
@@ -802,7 +830,8 @@ static void enterprise_panel_late_resume(struct early_suspend *h)
 	unsigned i;
 
 #ifdef CONFIG_TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
-	cpufreq_restore_default_governor();
+	if (cpufreq_restore_default_gov())
+		pr_err("Early_suspend: Unable to restore governor\n");
 #endif
 	for (i = 0; i < num_registered_fb; i++)
 		fb_blank(registered_fb[i], FB_BLANK_UNBLANK);

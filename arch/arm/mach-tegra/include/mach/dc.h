@@ -426,6 +426,7 @@ struct tegra_dc_win {
 	unsigned		out_w;
 	unsigned		out_h;
 	unsigned		z;
+	u8			global_alpha;
 
 	struct tegra_dc_csc	csc;
 
@@ -502,9 +503,12 @@ struct tegra_dc_platform_data {
 
 #define TEGRA_DC_FLAG_ENABLED		(1 << 0)
 
+int tegra_dc_get_stride(struct tegra_dc *dc, unsigned win);
 struct tegra_dc *tegra_dc_get_dc(unsigned idx);
 struct tegra_dc_win *tegra_dc_get_window(struct tegra_dc *dc, unsigned win);
 bool tegra_dc_get_connected(struct tegra_dc *);
+bool tegra_dc_hpd(struct tegra_dc *dc);
+
 
 void tegra_dc_blank(struct tegra_dc *dc);
 

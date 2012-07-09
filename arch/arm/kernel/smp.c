@@ -320,6 +320,13 @@ asmlinkage void __cpuinit secondary_start_kernel(void)
 	 */
 	percpu_timer_setup();
 
+	while (!cpu_active(cpu))
+		cpu_relax();
+
+	/*
+	 * cpu_active bit is set, so it's safe to enalbe interrupts
+	 * now.
+	 */
 	local_irq_enable();
 	local_fiq_enable();
 
@@ -450,7 +457,9 @@ static DEFINE_PER_CPU(struct clock_event_device, percpu_clockevent);
 static void ipi_timer(void)
 {
 	struct clock_event_device *evt = &__get_cpu_var(percpu_clockevent);
+	irq_enter();
 	evt->event_handler(evt);
+	irq_exit();
 }
 
 #ifdef CONFIG_LOCAL_TIMERS
@@ -623,9 +632,7 @@ asmlinkage void __exception_irq_entry do_IPI(int ipinr, struct pt_regs *regs)
 
 	switch (ipinr) {
 	case IPI_TIMER:
-		irq_enter();
 		ipi_timer();
-		irq_exit();
 		break;
 
 	case IPI_RESCHEDULE:
