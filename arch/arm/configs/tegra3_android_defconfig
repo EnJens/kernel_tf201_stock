@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux/arm 2.6.39.4 Kernel Configuration
-# Tue May 29 13:26:29 2012
+# Sun Jul 29 00:55:15 2012
 #
 CONFIG_ARM=y
 CONFIG_HAVE_PWM=y
@@ -562,7 +562,7 @@ CONFIG_INET_ESP=y
 # CONFIG_INET_XFRM_TUNNEL is not set
 CONFIG_INET_TUNNEL=y
 CONFIG_INET_XFRM_MODE_TRANSPORT=y
-# CONFIG_INET_XFRM_MODE_TUNNEL is not set
+CONFIG_INET_XFRM_MODE_TUNNEL=y
 # CONFIG_INET_XFRM_MODE_BEET is not set
 # CONFIG_INET_LRO is not set
 # CONFIG_INET_DIAG is not set
@@ -877,8 +877,6 @@ CONFIG_BT_BLUESLEEP=y
 # CONFIG_AF_RXRPC is not set
 CONFIG_FIB_RULES=y
 CONFIG_WIRELESS=y
-CONFIG_WEXT_CORE=y
-CONFIG_WEXT_PROC=y
 CONFIG_CFG80211=y
 CONFIG_NL80211_TESTMODE=y
 # CONFIG_CFG80211_DEVELOPER_WARNINGS is not set
@@ -1143,7 +1141,7 @@ CONFIG_DUMMY=y
 # CONFIG_BONDING is not set
 # CONFIG_MACVLAN is not set
 # CONFIG_EQUALIZER is not set
-# CONFIG_TUN is not set
+CONFIG_TUN=y
 # CONFIG_VETH is not set
 # CONFIG_ARCNET is not set
 CONFIG_MII=y
@@ -1196,10 +1194,8 @@ CONFIG_BCMDHD_CSCAN_ENABLE=y
 CONFIG_BCMDHD_INSMOD_NO_FW_LOAD=y
 # CONFIG_HOSTAP is not set
 # CONFIG_IPW2100 is not set
-# CONFIG_IPW2200 is not set
 # CONFIG_IWM is not set
 # CONFIG_LIBERTAS is not set
-# CONFIG_HERMES is not set
 
 #
 # Enable WiMAX (Networking options) to see the WiMAX drivers
