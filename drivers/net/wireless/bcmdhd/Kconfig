@@ -12,32 +12,42 @@ config BCMDHD
 
 config BCMDHD_FW_DIR
 	depends on BCMDHD
-	string "Firmware directory"
+	string "Firmware path"
 	default "/system/vendor/firmware"
 	---help---
 	  Path to the firmware file.
 
 config BCMDHD_NVRAM_DIR
 	depends on BCMDHD
-	string "NVRAM directory"
+	string "NVRAM path"
 	default "/system/etc"
 	---help---
 	  Path to the calibration file.
 
-config BCMDHD_NVRAM_PATH
+choice
+	prompt "Select API"
 	depends on BCMDHD
-	string "NVRAM path"
-	default "/system/etc/nvram.txt"
-	---help---
-	  Path to the calibration file.
+	default BCMDHD_NOAPI
 
 config BCMDHD_WEXT
 	bool "Enable WEXT support"
-	depends on BCMDHD && CFG80211 = n
 	select WIRELESS_EXT
 	select WEXT_PRIV
 	help
 	  Enables WEXT support
+
+config BCMDHD_CFG80211
+	bool "Enable CFG80211 support"
+	depends on CFG80211
+	help
+	  Enables CFG80211 support
+
+config BCMDHD_NOAPI
+	bool "No wireless API"
+	help
+	  No wireless API is needed
+
+endchoice
 
 config BCMDHD_WIFI_CONTROL_FUNC
 	bool "Use bcmdhd_wlan device"
@@ -53,3 +63,17 @@ config BCMDHD_HW_OOB
 	default n
 	---help---
 	  Use out of band interrupt for card interrupt and wake on wireless.
+
+config BCMDHD_CSCAN_ENABLE
+	bool "Enable Combo Scan"
+	depends on BCMDHD
+	default n
+	---help---
+	Enable Combo Scan
+
+config BCMDHD_INSMOD_NO_FW_LOAD
+	bool "Enable delayed firmware load"
+	depends on BCMDHD
+	default n
+	---help---
+	Enable delayes firmware

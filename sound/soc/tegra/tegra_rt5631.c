@@ -49,6 +49,9 @@ static int tegra_rt5631_hw_params(struct snd_pcm_substream *substream,
 
 	srate = params_rate(params);
 	switch (srate) {
+	case 44100:
+		mclk = 512 * srate;
+		break;
 	case 64000:
 	case 88200:
 	case 96000:
@@ -153,7 +156,7 @@ static int tegra_rt5631_init(struct snd_soc_pcm_runtime *rtd)
 
 	int ret;
 	printk("%s+\n", __func__);
-	if (machine_is_cardhu() || machine_is_ventana()) {
+	if (machine_is_tf201() || machine_is_cardhu() || machine_is_ventana()) {
 		ret = snd_soc_add_controls(codec, cardhu_controls,
 				ARRAY_SIZE(cardhu_controls));
 		if (ret < 0)
