@@ -58,6 +58,10 @@
 #define   ENB_FAST_REARBITRATE	BIT(2)
 #define   DONT_SPLIT_AHB_WR     BIT(7)
 
+#define   RECOVERY_MODE BIT(31)
+#define   BOOTLOADER_MODE   BIT(30)
+#define   FORCED_RECOVERY_MODE  BIT(1)
+
 #define AHB_GIZMO_USB		0x1c
 #define AHB_GIZMO_USB2		0x78
 #define AHB_GIZMO_USB3		0x7c
@@ -110,7 +114,28 @@ void tegra_assert_system_reset(char mode, const char *cmd)
 	do { } while (1);
 #else
 	void __iomem *reset = IO_ADDRESS(TEGRA_PMC_BASE + 0x00);
+	void __iomem *scratch0 = IO_ADDRESS(TEGRA_PMC_BASE + 0x50);
 	u32 reg;
+
+	reg = readl_relaxed(scratch0);
+	/* Writing recovery, bootloader or APX mode in SCRATCH0 31:30:1 */
+	if (cmd) {
+		if (!strcmp(cmd, "recovery"))
+			reg |= RECOVERY_MODE;
+		else if (!strcmp(cmd, "bootloader"))
+			reg |= BOOTLOADER_MODE;
+		else if (!strcmp(cmd, "forced-recovery"))
+			reg |= FORCED_RECOVERY_MODE;
+		else if (!strncmp(cmd, "apx", 3))
+			reg |= FORCED_RECOVERY_MODE;
+		else
+			reg &= ~(BOOTLOADER_MODE | RECOVERY_MODE | FORCED_RECOVERY_MODE);
+	}
+	else {
+			/* Clearing SCRATCH0 31:30:1 on default reboot */
+			reg &= ~(BOOTLOADER_MODE | RECOVERY_MODE | FORCED_RECOVERY_MODE);
+	}
+	writel_relaxed(reg, scratch0);
 
 	/* use *_related to avoid spinlock since caches are off */
 	reg = readl_relaxed(reset);
