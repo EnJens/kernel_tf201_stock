@@ -46,6 +46,10 @@ struct mmc_ext_csd {
 	u8			rev;
 	u8			erase_group_def;
 	u8			sec_feature_support;
+        u8                      rel_sectors;
+        u8                      rel_param;
+        u8                      part_config;
+	unsigned int            part_time;              /* Units: ms */
 	unsigned int		sa_timeout;		/* Units: 100ns */
 	unsigned int		hs_max_dtr;
 	unsigned int		sectors;
@@ -132,6 +136,28 @@ struct sdio_func_tuple;
 
 #define SDIO_MAX_FUNCS		7
 
+/* The number of MMC physical partitions.  These consist of:
+ * boot partitions (2), general purpose partitions (4) in MMC v4.4.
+ */
+#define MMC_NUM_BOOT_PARTITION  2
+#define MMC_NUM_GP_PARTITION    4
+#define MMC_NUM_PHY_PARTITION   6
+#define MAX_MMC_PART_NAME_LEN   20
+
+/*
+ * MMC Physical partitions
+ */
+struct mmc_part {
+        unsigned int    size;   /* partition size (in bytes) */
+        unsigned int    part_cfg;       /* partition type */
+        char    name[MAX_MMC_PART_NAME_LEN];
+        bool    force_ro;       /* to make boot parts RO by default */
+        unsigned int    area_type;
+#define MMC_BLK_DATA_AREA_MAIN  (1<<0)
+#define MMC_BLK_DATA_AREA_BOOT  (1<<1)
+#define MMC_BLK_DATA_AREA_GP    (1<<2)
+};
+
 /*
  * MMC device
  */
@@ -188,7 +214,25 @@ struct mmc_card {
 	unsigned int		sd_bus_speed;	/* Bus Speed Mode set for the card */
 
 	struct dentry		*debugfs_root;
+        struct mmc_part part[MMC_NUM_PHY_PARTITION]; /* physical partitions */
+        unsigned int    nr_parts;
 };
+
+/*
+ * This function fill contents in mmc_part.
+ */
+static inline void mmc_part_add(struct mmc_card *card, unsigned int size,
+                        unsigned int part_cfg, char *name, int idx, bool ro,
+                        int area_type)
+{
+        card->part[card->nr_parts].size = size;
+        card->part[card->nr_parts].part_cfg = part_cfg;
+        sprintf(card->part[card->nr_parts].name, name, idx);
+        card->part[card->nr_parts].force_ro = ro;
+        card->part[card->nr_parts].area_type = area_type;
+        card->nr_parts++;
+}
+
 
 /*
  *  The world is not perfect and supplies us with broken mmc/sdio devices.

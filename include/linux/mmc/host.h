@@ -142,6 +142,16 @@ struct mmc_host_ops {
 struct mmc_card;
 struct device;
 
+struct mmc_async_req {
+        /* active mmc request */
+        struct mmc_request      *mrq;
+        /*
+         * Check error status of completed mmc request.
+         * Returns 0 if success otherwise non zero.
+         */
+        int (*err_check) (struct mmc_card *, struct mmc_async_req *);
+};
+
 struct mmc_host {
 	struct device		*parent;
 	struct device		class_dev;
@@ -390,6 +400,13 @@ static inline int mmc_card_is_powered_resumed(struct mmc_host *host)
 {
 	return host->pm_flags & MMC_PM_KEEP_POWER;
 }
+
+static inline int mmc_boot_partition_access(struct mmc_host *host)
+{
+	// Temporary - we know we have boot partition access on TF Prime
+        return 1;
+}
+
 
 #endif
 

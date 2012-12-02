@@ -130,6 +130,10 @@ struct mmc_request {
 
 struct mmc_host;
 struct mmc_card;
+struct mmc_async_req;
+
+extern struct mmc_async_req *mmc_start_req(struct mmc_host *,
+                                           struct mmc_async_req *, int *);
 
 extern int mmc_interrupt_hpi(struct mmc_card *);
 extern int mmc_bkops_start(struct mmc_card *card, bool is_synchronous);

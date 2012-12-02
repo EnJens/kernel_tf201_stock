@@ -72,6 +72,7 @@ static int max_devices;
 
 /* 256 minors, so at most 256 separate devices */
 static DECLARE_BITMAP(dev_use, 256);
+static DECLARE_BITMAP(name_use, 256);
 
 /*
  * There is one mmc_blk_data per slot.
@@ -80,9 +81,27 @@ struct mmc_blk_data {
 	spinlock_t	lock;
 	struct gendisk	*disk;
 	struct mmc_queue queue;
+	struct list_head part;
 
 	unsigned int	usage;
 	unsigned int	read_only;
+	unsigned int    part_type;
+        unsigned int    name_idx;
+        unsigned int    reset_done;
+#define MMC_BLK_READ            BIT(0)
+#define MMC_BLK_WRITE           BIT(1)
+#define MMC_BLK_DISCARD         BIT(2)
+#define MMC_BLK_SECDISCARD      BIT(3)
+
+        /*
+         * Only set in main mmc_blk_data associated
+         * with mmc_card with mmc_set_drvdata, and keeps
+         * track of the current selected device partition.
+         */
+        unsigned int    part_curr;
+        struct device_attribute force_ro;
+        struct device_attribute power_ro_lock;
+        int     area_type;
 };
 
 static DEFINE_MUTEX(open_lock);
@@ -105,13 +124,22 @@ static struct mmc_blk_data *mmc_blk_get(struct gendisk *disk)
 	return md;
 }
 
+static inline int mmc_get_devidx(struct gendisk *disk)
+{
+        int devmaj = MAJOR(disk_devt(disk));
+        int devidx = MINOR(disk_devt(disk)) / perdev_minors;
+
+        if (!devmaj)
+                devidx = disk->first_minor / perdev_minors;
+        return devidx;
+}
+
 static void mmc_blk_put(struct mmc_blk_data *md)
 {
 	mutex_lock(&open_lock);
 	md->usage--;
 	if (md->usage == 0) {
-		int devidx = md->disk->first_minor / perdev_minors;
-
+		int devidx = mmc_get_devidx(md->disk);
 		blk_cleanup_queue(md->queue.queue);
 
 		__clear_bit(devidx, dev_use);
@@ -168,6 +196,33 @@ static const struct block_device_operations mmc_bdops = {
 	.getgeo			= mmc_blk_getgeo,
 	.owner			= THIS_MODULE,
 };
+
+static inline int mmc_blk_part_switch(struct mmc_card *card,
+                                      struct mmc_blk_data *md)
+{
+        int ret;
+        struct mmc_blk_data *main_md = mmc_get_drvdata(card);
+
+        if (main_md->part_curr == md->part_type)
+                return 0;
+
+        if (mmc_card_mmc(card)) {
+                u8 part_config = card->ext_csd.part_config;
+
+                part_config &= ~EXT_CSD_PART_CONFIG_ACC_MASK;
+                part_config |= md->part_type;
+
+                ret = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+                                 EXT_CSD_PART_CONFIG, part_config);
+                if (ret)
+                        return ret;
+
+                card->ext_csd.part_config = part_config;
+        }
+
+        main_md->part_curr = md->part_type;
+        return 0;
+}
 
 struct mmc_blk_request {
 	struct mmc_request	mrq;
@@ -601,28 +656,47 @@ mmc_blk_set_blksize(struct mmc_blk_data *md, struct mmc_card *card);
 
 static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 {
-#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
+	int ret;
 	struct mmc_blk_data *md = mq->data;
 	struct mmc_card *card = md->queue.card;
 
+#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 	if (mmc_bus_needs_resume(card->host)) {
 		mmc_resume_bus(card->host);
 		mmc_blk_set_blksize(md, card);
 	}
 #endif
+	// TODO: Is probably more efficient to claim host, then keep it 
+	// until done with current queue?
+        mmc_claim_host(card->host);
+
+        ret = mmc_blk_part_switch(card, md);
+        if (ret) {
+                if (req) {
+                        spin_lock_irq(&md->lock);
+                        __blk_end_request_all(req, -EIO);
+                        spin_unlock_irq(&md->lock);
+                }
+                ret = 0;
+                goto out;
+        }
 
 	if (req->cmd_flags & REQ_DISCARD) {
 		if (req->cmd_flags & REQ_SECURE)
-			return mmc_blk_issue_secdiscard_rq(mq, req);
+			ret = mmc_blk_issue_secdiscard_rq(mq, req);
 		else
-			return mmc_blk_issue_discard_rq(mq, req);
+			ret = mmc_blk_issue_discard_rq(mq, req);
 	} else {
 		/* Abort any current bk ops of eMMC card by issuing HPI */
 		if (mmc_card_mmc(mq->card) && mmc_card_doing_bkops(mq->card))
 			mmc_interrupt_hpi(mq->card);
 
-		return mmc_blk_issue_rw_rq(mq, req);
+		ret = mmc_blk_issue_rw_rq(mq, req);
 	}
+out:
+        mmc_release_host(card->host);
+
+	return ret;
 }
 
 static inline int mmc_blk_readonly(struct mmc_card *card)
@@ -631,93 +705,176 @@ static inline int mmc_blk_readonly(struct mmc_card *card)
 	       !(card->csd.cmdclass & CCC_BLOCK_WRITE);
 }
 
-static struct mmc_blk_data *mmc_blk_alloc(struct mmc_card *card)
+static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
+                                              struct device *parent,
+                                              sector_t size,
+                                              bool default_ro,
+                                              const char *subname,
+                                              int area_type)
 {
-	struct mmc_blk_data *md;
-	int devidx, ret;
+        struct mmc_blk_data *md;
+        int devidx, ret;
 
-	devidx = find_first_zero_bit(dev_use, max_devices);
-	if (devidx >= max_devices)
-		return ERR_PTR(-ENOSPC);
-	__set_bit(devidx, dev_use);
+        devidx = find_first_zero_bit(dev_use, max_devices);
+        if (devidx >= max_devices)
+                return ERR_PTR(-ENOSPC);
+        __set_bit(devidx, dev_use);
 
-	md = kzalloc(sizeof(struct mmc_blk_data), GFP_KERNEL);
-	if (!md) {
-		ret = -ENOMEM;
-		goto out;
-	}
+        md = kzalloc(sizeof(struct mmc_blk_data), GFP_KERNEL);
+        if (!md) {
+                ret = -ENOMEM;
+                goto out;
+        }
+        /*
+         * !subname implies we are creating main mmc_blk_data that will be
+         * associated with mmc_card with mmc_set_drvdata. Due to device
+         * partitions, devidx will not coincide with a per-physical card
+         * index anymore so we keep track of a name index.
+         */
+        if (!subname) {
+                md->name_idx = find_first_zero_bit(name_use, max_devices);
+                __set_bit(md->name_idx, name_use);
+        } else
+                md->name_idx = ((struct mmc_blk_data *)
+                                dev_to_disk(parent)->private_data)->name_idx;
+
+        md->area_type = area_type;
+
+        /*
+         * Set the read-only status based on the supported commands
+         * and the write protect switch.
+         */
+        md->read_only = mmc_blk_readonly(card);
+
+        md->disk = alloc_disk(perdev_minors);
+        if (md->disk == NULL) {
+                ret = -ENOMEM;
+                goto err_kfree;
+        }
+
+        spin_lock_init(&md->lock);
+        INIT_LIST_HEAD(&md->part);
+        md->usage = 1;
+
+        ret = mmc_init_queue(&md->queue, card, &md->lock, subname);
+        if (ret)
+                goto err_putdisk;
+
+        md->queue.issue_fn = mmc_blk_issue_rq;
+        md->queue.data = md;
+
+        md->disk->major = MMC_BLOCK_MAJOR;
+        md->disk->first_minor = devidx * perdev_minors;
+        md->disk->fops = &mmc_bdops;
+        md->disk->private_data = md;
+        md->disk->queue = md->queue.queue;
+        md->disk->driverfs_dev = parent;
+        set_disk_ro(md->disk, md->read_only || default_ro);
 
 
-	/*
-	 * Set the read-only status based on the supported commands
-	 * and the write protect switch.
-	 */
-	md->read_only = mmc_blk_readonly(card);
+        /*
+         * As discussed on lkml, GENHD_FL_REMOVABLE should:
+         *
+         * - be set for removable media with permanent block devices
+         * - be unset for removable block devices with permanent media
+         *
+         * Since MMC block devices clearly fall under the second
+         * case, we do not set GENHD_FL_REMOVABLE.  Userspace
+         * should use the block device creation/destruction hotplug
+         * messages to tell when the card is present.
+         */
 
-	md->disk = alloc_disk(perdev_minors);
-	if (md->disk == NULL) {
-		ret = -ENOMEM;
-		goto err_kfree;
-	}
+        snprintf(md->disk->disk_name, sizeof(md->disk->disk_name),
+                 "mmcblk%d%s", md->name_idx, subname ? subname : "");
 
-	spin_lock_init(&md->lock);
-	md->usage = 1;
+        blk_queue_logical_block_size(md->queue.queue, 512);
+        set_capacity(md->disk, size);
 
-	ret = mmc_init_queue(&md->queue, card, &md->lock);
-	if (ret)
-		goto err_putdisk;
-
-	md->queue.issue_fn = mmc_blk_issue_rq;
-	md->queue.data = md;
-
-	md->disk->major	= MMC_BLOCK_MAJOR;
-	md->disk->first_minor = devidx * perdev_minors;
-	md->disk->fops = &mmc_bdops;
-	md->disk->private_data = md;
-	md->disk->queue = md->queue.queue;
-	md->disk->driverfs_dev = &card->dev;
-	md->disk->flags = GENHD_FL_EXT_DEVT;
-	set_disk_ro(md->disk, md->read_only);
-
-	/*
-	 * As discussed on lkml, GENHD_FL_REMOVABLE should:
-	 *
-	 * - be set for removable media with permanent block devices
-	 * - be unset for removable block devices with permanent media
-	 *
-	 * Since MMC block devices clearly fall under the second
-	 * case, we do not set GENHD_FL_REMOVABLE.  Userspace
-	 * should use the block device creation/destruction hotplug
-	 * messages to tell when the card is present.
-	 */
-
-	snprintf(md->disk->disk_name, sizeof(md->disk->disk_name),
-		"mmcblk%d", devidx);
-
-	blk_queue_logical_block_size(md->queue.queue, 512);
-
-	if (!mmc_card_sd(card) && mmc_card_blockaddr(card)) {
-		/*
-		 * The EXT_CSD sector count is in number or 512 byte
-		 * sectors.
-		 */
-		set_capacity(md->disk, card->ext_csd.sectors);
-	} else {
-		/*
-		 * The CSD capacity field is in units of read_blkbits.
-		 * set_capacity takes units of 512 bytes.
-		 */
-		set_capacity(md->disk,
-			card->csd.capacity << (card->csd.read_blkbits - 9));
-	}
-	return md;
+        return md;
 
  err_putdisk:
-	put_disk(md->disk);
+        put_disk(md->disk);
  err_kfree:
-	kfree(md);
+        kfree(md);
  out:
-	return ERR_PTR(ret);
+        return ERR_PTR(ret);
+}
+
+static struct mmc_blk_data *mmc_blk_alloc(struct mmc_card *card)
+{
+        sector_t size;
+        struct mmc_blk_data *md;
+
+        if (!mmc_card_sd(card) && mmc_card_blockaddr(card)) {
+                /*
+                 * The EXT_CSD sector count is in number or 512 byte
+                 * sectors.
+                 */
+                size = card->ext_csd.sectors;
+        } else {
+                /*
+                 * The CSD capacity field is in units of read_blkbits.
+                 * set_capacity takes units of 512 bytes.
+                 */
+                size = card->csd.capacity << (card->csd.read_blkbits - 9);
+        }
+
+        md = mmc_blk_alloc_req(card, &card->dev, size, false, NULL,
+                                        MMC_BLK_DATA_AREA_MAIN);
+        return md;
+}
+
+static int mmc_blk_alloc_part(struct mmc_card *card,
+                              struct mmc_blk_data *md,
+                              unsigned int part_type,
+                              sector_t size,
+                              bool default_ro,
+                              const char *subname,
+                              int area_type)
+{
+        char cap_str[10];
+        struct mmc_blk_data *part_md;
+	 part_md = mmc_blk_alloc_req(card, disk_to_dev(md->disk), size, default_ro,
+                                    subname, area_type);
+        if (IS_ERR(part_md))
+                return PTR_ERR(part_md);
+        part_md->part_type = part_type;
+        list_add(&part_md->part, &md->part);
+
+        string_get_size((u64)get_capacity(part_md->disk) << 9, STRING_UNITS_2,
+                        cap_str, sizeof(cap_str));
+        pr_info("%s: %s %s partition %u %s\n",
+        	part_md->disk->disk_name, mmc_card_id(card),
+        	mmc_card_name(card), part_md->part_type, cap_str);
+        return 0;
+}
+
+/* MMC Physical partitions consist of two boot partitions and
+ * up to four general purpose partitions.
+ * For each partition enabled in EXT_CSD a block device will be allocatedi
+ * to provide access to the partition.
+ */
+
+static int mmc_blk_alloc_parts(struct mmc_card *card, struct mmc_blk_data *md)
+{
+        int idx, ret = 0;
+
+        if (!mmc_card_mmc(card))
+                return 0;
+        for (idx = 0; idx < card->nr_parts; idx++) {
+                if (card->part[idx].size) {
+                        ret = mmc_blk_alloc_part(card, md,
+                                card->part[idx].part_cfg,
+                                card->part[idx].size >> 9,
+                                card->part[idx].force_ro,
+                                card->part[idx].name,
+                                card->part[idx].area_type);
+                        if (ret)
+                                return ret;
+                }
+        }
+
+        return ret;
 }
 
 static int
@@ -738,6 +895,37 @@ mmc_blk_set_blksize(struct mmc_blk_data *md, struct mmc_card *card)
 	return 0;
 }
 
+static void mmc_blk_remove_req(struct mmc_blk_data *md)
+{
+        struct mmc_card *card;
+
+        if (md) {
+                card = md->queue.card;
+                if (md->disk->flags & GENHD_FL_UP) {
+                        /* Stop new requests from getting into the queue */
+                        del_gendisk(md->disk);
+                }
+
+                /* Then flush out any already in there */
+                mmc_cleanup_queue(&md->queue);
+                mmc_blk_put(md);
+        }
+}
+
+static void mmc_blk_remove_parts(struct mmc_card *card,
+                                 struct mmc_blk_data *md)
+{
+        struct list_head *pos, *q;
+        struct mmc_blk_data *part_md;
+
+        __clear_bit(md->name_idx, name_use);
+        list_for_each_safe(pos, q, &md->part) {
+                part_md = list_entry(pos, struct mmc_blk_data, part);
+                list_del(pos);
+                mmc_blk_remove_req(part_md);
+        }
+}
+
 static const struct mmc_fixup blk_fixups[] =
 {
 	MMC_FIXUP("SEM16G", 0x2, 0x100, add_quirk, MMC_QUIRK_INAND_CMD38),
@@ -750,7 +938,7 @@ static int mmc_blk_probe(struct mmc_card *card)
 	struct mmc_blk_data *md;
 	int err;
 	char cap_str[10];
-
+	struct mmc_blk_data *part_md;
 	/*
 	 * Check that the card supports the command class(es) we need.
 	 */
@@ -771,6 +959,9 @@ static int mmc_blk_probe(struct mmc_card *card)
 		md->disk->disk_name, mmc_card_id(card), mmc_card_name(card),
 		cap_str, md->read_only ? "(ro)" : "");
 
+	if (mmc_blk_alloc_parts(card, md))
+                goto out;
+
 	mmc_set_drvdata(card, md);
 	mmc_fixup_device(card, blk_fixups);
 
@@ -778,6 +969,9 @@ static int mmc_blk_probe(struct mmc_card *card)
 	mmc_set_bus_resume_policy(card->host, 1);
 #endif
 	add_disk(md->disk);
+	list_for_each_entry(part_md, &md->part, part) {
+                add_disk(part_md->disk);
+        }
 	return 0;
 
  out:
@@ -785,22 +979,19 @@ static int mmc_blk_probe(struct mmc_card *card)
 	mmc_blk_put(md);
 
 	return err;
-}
+};
 
 static void mmc_blk_remove(struct mmc_card *card)
 {
 	struct mmc_blk_data *md = mmc_get_drvdata(card);
 
-	if (md) {
-		/* Stop new requests from getting into the queue */
-		del_gendisk(md->disk);
+        mmc_blk_remove_parts(card, md);
+        mmc_claim_host(card->host);
+        mmc_blk_part_switch(card, md);
+        mmc_release_host(card->host);
+        mmc_blk_remove_req(md);
+        mmc_set_drvdata(card, NULL);
 
-		/* Then flush out any already in there */
-		mmc_cleanup_queue(&md->queue);
-
-		mmc_blk_put(md);
-	}
-	mmc_set_drvdata(card, NULL);
 #ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 	mmc_set_bus_resume_policy(card->host, 0);
 #endif
@@ -809,26 +1000,40 @@ static void mmc_blk_remove(struct mmc_card *card)
 #ifdef CONFIG_PM
 static int mmc_blk_suspend(struct mmc_card *card, pm_message_t state)
 {
+	struct mmc_blk_data *part_md;
 	struct mmc_blk_data *md = mmc_get_drvdata(card);
 
 	if (md) {
 		mmc_queue_suspend(&md->queue);
+		list_for_each_entry(part_md, &md->part, part) {
+                        mmc_queue_suspend(&part_md->queue);
+			};
 	}
 	return 0;
-}
+};
 
 static int mmc_blk_resume(struct mmc_card *card)
 {
+	struct mmc_blk_data *part_md;
 	struct mmc_blk_data *md = mmc_get_drvdata(card);
 
 	if (md) {
 #ifndef CONFIG_MMC_BLOCK_DEFERRED_RESUME
 		mmc_blk_set_blksize(md, card);
 #endif
-		mmc_queue_resume(&md->queue);
+                /*
+                 * Resume involves the card going into idle state,
+                 * so current partition is always the main one.
+                 */
+                md->part_curr = md->part_type;
+                mmc_queue_resume(&md->queue);
+                list_for_each_entry(part_md, &md->part, part) {
+                        mmc_queue_resume(&part_md->queue);
+		};
+
 	}
 	return 0;
-}
+};
 #else
 #define	mmc_blk_suspend	NULL
 #define mmc_blk_resume	NULL

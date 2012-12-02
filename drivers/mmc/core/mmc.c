@@ -178,7 +178,8 @@ static int mmc_decode_csd(struct mmc_card *card)
  */
 static int mmc_read_ext_csd(struct mmc_card *card)
 {
-	int err;
+	int err, idx;
+	unsigned int part_size;
 	u8 *ext_csd;
 
 	BUG_ON(!card);
@@ -300,6 +301,23 @@ static int mmc_read_ext_csd(struct mmc_card *card)
 			ext_csd[EXT_CSD_ERASE_TIMEOUT_MULT];
 		card->ext_csd.hc_erase_size =
 			ext_csd[EXT_CSD_HC_ERASE_GRP_SIZE] << 10;
+		card->ext_csd.part_config = ext_csd[EXT_CSD_PART_CONFIG];
+
+                /* EXT_CSD value is in units of 10ms, but we store in ms */
+                card->ext_csd.part_time = 10 * ext_csd[EXT_CSD_PART_SWITCH_TIME];
+	      /*
+                 * There are two boot regions of equal size, defined in
+                 * multiples of 128K.
+                 */
+                if (ext_csd[EXT_CSD_BOOT_SIZE_MULTI] && mmc_boot_partition_access(card->host)) {
+                        for (idx = 0; idx < MMC_NUM_BOOT_PARTITION; idx++) {
+                                part_size = ext_csd[EXT_CSD_BOOT_SIZE_MULTI] << 17;
+                                mmc_part_add(card, part_size,
+                                        EXT_CSD_PART_CONFIG_ACC_BOOT0 + idx,
+                                        "boot%d", idx, true,
+                                        MMC_BLK_DATA_AREA_BOOT);
+                        }
+		 }
 	}
 
 	if (card->ext_csd.rev >= 4) {
@@ -588,6 +606,16 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 			mmc_set_erase_size(card);
 		}
 	}
+        /*
+         * Ensure eMMC user default partition is enabled
+         */
+        if (card->ext_csd.part_config & EXT_CSD_PART_CONFIG_ACC_MASK) {
+                card->ext_csd.part_config &= ~EXT_CSD_PART_CONFIG_ACC_MASK;
+                err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL, EXT_CSD_PART_CONFIG,
+                                 card->ext_csd.part_config);
+                if (err && err != -EBADMSG)
+                        goto free_card;
+        }
 
 	/*
 	 * Activate high speed (if supported)
